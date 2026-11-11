@@ -138,10 +138,24 @@ The top of the home screen works like a car's trip meter. It shows catches per a
 
 - The reset time is stored in the `settings` table (schema version 2) as UTC milliseconds, rounded to the second. The meter is worked out from the synced data, so a reset works with no logger in reach.
 - Trips that started after the reset count in full. A trip under way at the reset counts only from the reset on: its stats are recomputed from the points and catches after it.
-- "Time on the water" adds up each trip's span, from its first record to its last.
-- The totals include catches the logger made before it had the time. The meter leaves those out, because it can't tell whether they came before or after the reset.
-- A reset is also queued for the logger, so its screen shows the same meter. At the next sync, after LIST and before the downloads, `sendQueuedMeterReset` sends it through the `LoggerMeter` interface ([logger_meter.dart](../app/lib/sync/logger_meter.dart)). The queue clears only once the logger accepts it. A reset that can't be sent stays queued and never fails the sync. If the phone is reset again before a sync, only the newest reset is sent.
-- **Waiting on the firmware.** The meter commands will be documented in `docs/ble-protocol.md`. Until they are, the app uses `NoLoggerMeter`, which reports that the logger doesn't support them, so resets stay queued. Supporting them means writing a `LoggerMeter` that does two things: recognise a capable logger from its HELLO, and send the reset time (the logger counts from that time, whatever its own clock says). Then pass it to `SyncController`.
+- **Time on the water** follows the logger's rule, so the two screens agree. It's the sum of the gaps between consecutive track points at most 15 minutes apart. A longer gap means the logger was off or had no fix. Each trip stores this as `trips.logged_s`. Schema version 2 added that column, and `Repository.upgradeTrips()` fills it in once, at start-up, for trips stored before the upgrade.
+- Distance uses the same 15-minute pairs. The phone also skips GPS glitches (legs implying over 120 km/h) and the logger doesn't, so the phone can read a little lower.
+- The totals include catches the logger made before it had the time. The meter leaves those out, because it can't tell whether they came before or after the reset. The logger counts them live, so its meter can be higher by those catches.
+
+#### Keeping the logger's meter in step
+
+The logger keeps its own meter for its screen. Protocol version 2 adds METER and METER_RESET (see the "Trip meter (v2)" section of [ble-protocol.md](ble-protocol.md)). [logger_meter.dart](../app/lib/sync/logger_meter.dart) implements them as `BleLoggerMeter`. At each sync, after LIST and before the downloads, `syncLoggerMeter` does one of these:
+
+| Situation | What happens |
+|---|---|
+| Logger on protocol v1 | Nothing is sent. A reset stays queued until the firmware is updated |
+| A reset made on the phone is queued | METER_RESET with that time. The queue clears only when the logger's reply carries the same time |
+| Nothing queued, both count from the same time | METER only, to read the logger's meter |
+| Nothing queued, the logger counts from a different time (a fresh card, say) | The phone's reset is sent again, since the phone is the source of truth |
+| The phone was never reset but the logger was (after a reinstall, say) | The phone takes the logger's reset time |
+| ERROR 5 (card not writable), a wrong reply, or a timeout | The reset stays queued. The sync carries on |
+
+Moving files to `/uploaded` doesn't change the logger's meter, so the reading taken before the downloads still holds afterwards. The sync's done screen shows the logger's meter, and whether it matches the phone's meter, which by then includes the new files. Catches must match exactly. Distance may differ by up to 50 m or 2%, and time on the water by up to 2 minutes or 2%. The panel also shows the logger's flags: an incomplete card read, or no GPS time since it started.
 
 ### Map and replay
 

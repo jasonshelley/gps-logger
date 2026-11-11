@@ -68,6 +68,7 @@ class TripStats {
     required this.endMs,
     required this.distanceM,
     required this.movingS,
+    this.loggedS = 0,
     required this.maxSpeedKmh,
     required this.pointCount,
     required this.catchesByAngler,
@@ -78,6 +79,11 @@ class TripStats {
   final int endMs;
   final double distanceM;
   final int movingS;
+
+  /// Time spent logging: the sum of the gaps between consecutive points in
+  /// the same segment (at most 15 min apart). The logger's trip meter counts
+  /// "time on the water" the same way.
+  final int loggedS;
   final double? maxSpeedKmh;
   final int pointCount;
   final Map<String, int> catchesByAngler;
@@ -103,6 +109,7 @@ double _legSpeedKmh(TrackPoint a, TrackPoint b, double distM) {
 TripStats computeTripStats(List<TrackPoint> points, List<CatchEvent> catches) {
   var distance = 0.0;
   var moving = 0;
+  var loggedMs = 0;
   double? maxSpeed;
   for (final seg in splitSegments(points)) {
     for (var i = 1; i < seg.length; i++) {
@@ -110,6 +117,7 @@ TripStats computeTripStats(List<TrackPoint> points, List<CatchEvent> catches) {
       final d = haversineM(a.lat, a.lon, b.lat, b.lon);
       final dt = (b.t - a.t) / 1000;
       if (dt <= 0) continue;
+      loggedMs += b.t - a.t; // even across a glitch: the logger was logging
       final implied = d / dt * 3.6;
       if (implied > maxPlausibleKmh) continue; // a jump, not a real leg
       distance += d;
@@ -143,6 +151,7 @@ TripStats computeTripStats(List<TrackPoint> points, List<CatchEvent> catches) {
     endMs: end,
     distanceM: distance,
     movingS: moving,
+    loggedS: loggedMs ~/ 1000,
     maxSpeedKmh: maxSpeed,
     pointCount: points.length,
     catchesByAngler: byAngler,

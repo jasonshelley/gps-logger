@@ -9,7 +9,12 @@ const String serviceUuid = '1f5f0001-56c8-49fb-9d0c-055269d0a2e3';
 const String rxCharUuid = '1f5f0002-56c8-49fb-9d0c-055269d0a2e3'; // phone -> logger
 const String txCharUuid = '1f5f0003-56c8-49fb-9d0c-055269d0a2e3'; // logger -> phone
 const String advertisedName = 'GPS Logger';
-const int protocolVersion = 1;
+/// The newest protocol version the app speaks. Older loggers still work:
+/// version 2 only added the trip meter, and nothing in version 1 changed.
+const int protocolVersion = 2;
+
+/// The first version with the trip meter (METER, METER_RESET).
+const int meterProtocolVersion = 2;
 
 abstract final class Cmd {
   static const hello = 0x01;
@@ -17,6 +22,8 @@ abstract final class Cmd {
   static const get = 0x03;
   static const confirm = 0x04;
   static const abort = 0x05;
+  static const meter = 0x06; // v2
+  static const meterReset = 0x07; // v2: reset u32 (UTC seconds)
 }
 
 abstract final class Evt {
@@ -26,6 +33,7 @@ abstract final class Evt {
   static const begin = 0x84;
   static const end = 0x85;
   static const confirmed = 0x86;
+  static const meter = 0x87; // v2
   static const data = 0x90;
   static const error = 0xEE;
 }
@@ -39,8 +47,10 @@ String describeLoggerError(int code, String text) {
       return 'The file is no longer on the logger';
     case 4:
       return 'The logger is busy sending another file';
+    case 1:
+      return 'The logger doesn\'t know that command (its firmware is older than this app)';
     case 5:
-      return 'The logger can\'t read its SD card';
+      return 'The logger can\'t read or write its SD card';
     case 6:
       return 'The logger hit a read error on its SD card';
     case 7:
@@ -57,6 +67,15 @@ String describeLoggerError(int code, String text) {
 Uint8List encodeHello() => Uint8List.fromList([Cmd.hello]);
 Uint8List encodeList() => Uint8List.fromList([Cmd.list]);
 Uint8List encodeAbort() => Uint8List.fromList([Cmd.abort]);
+Uint8List encodeMeter() => Uint8List.fromList([Cmd.meter]);
+
+/// METER_RESET: count from [resetUtcSeconds] (0 = count everything).
+Uint8List encodeMeterReset(int resetUtcSeconds) {
+  final b = Uint8List(5);
+  b[0] = Cmd.meterReset;
+  ByteData.sublistView(b).setUint32(1, resetUtcSeconds, Endian.little);
+  return b;
+}
 
 Uint8List encodeGet(String name) =>
     Uint8List.fromList([Cmd.get, ...ascii.encode(name)]);
@@ -116,6 +135,35 @@ class ConfirmedEvent extends LoggerEvent {
   final String name;
 }
 
+/// The logger's own trip meter (v2).
+class MeterEvent extends LoggerEvent {
+  const MeterEvent({
+    required this.resetUtcSeconds,
+    required this.jase,
+    required this.matt,
+    required this.distanceM,
+    required this.waterS,
+    required this.flags,
+  });
+
+  /// The reset in force; 0 means never reset.
+  final int resetUtcSeconds;
+  final int jase;
+  final int matt;
+  final int distanceM;
+  final int waterS;
+  final int flags;
+
+  /// The card couldn't be read for the last rebuild, so the numbers may be low.
+  bool get incomplete => flags & 0x01 != 0;
+
+  /// The logger hasn't had GPS time since it started.
+  bool get clockNotSet => flags & 0x02 != 0;
+
+  DateTime? get resetAt =>
+      resetUtcSeconds == 0 ? null : DateTime.fromMillisecondsSinceEpoch(resetUtcSeconds * 1000, isUtc: true);
+}
+
 class ErrorEvent extends LoggerEvent {
   const ErrorEvent(this.code, this.text);
   final int code;
@@ -169,6 +217,16 @@ LoggerEvent decodeEvent(Uint8List b) {
       return EndEvent(d.getUint32(1, Endian.little), d.getUint32(5, Endian.little));
     case Evt.confirmed:
       return ConfirmedEvent(_name(b, 1));
+    case Evt.meter:
+      need(18);
+      return MeterEvent(
+        resetUtcSeconds: d.getUint32(1, Endian.little),
+        jase: d.getUint16(5, Endian.little),
+        matt: d.getUint16(7, Endian.little),
+        distanceM: d.getUint32(9, Endian.little),
+        waterS: d.getUint32(13, Endian.little),
+        flags: b[17],
+      );
     case Evt.error:
       need(2);
       return ErrorEvent(b[1], _name(b, 2));

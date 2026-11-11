@@ -268,8 +268,9 @@ class Repository {
         final n = Sqflite.firstIntValue(await db.rawQuery(
                 'SELECT COUNT(*) FROM points WHERE t BETWEEN ? AND ?', [w.startMs, w.endMs])) ??
             0;
-        final stored = Sqflite.firstIntValue(
-                await db.rawQuery('SELECT points FROM trips WHERE id = ?', [w.startMs])) ??
+        // A trip from before schema version 2 has no logged time yet: recompute it.
+        final stored = Sqflite.firstIntValue(await db.rawQuery(
+                'SELECT points FROM trips WHERE id = ? AND logged_s IS NOT NULL', [w.startMs])) ??
             -1;
         final storedCatches = (await db.rawQuery('SELECT catches FROM trips WHERE id = ?', [w.startMs]))
             .first['catches'] as String;
@@ -291,11 +292,23 @@ class Repository {
     return keep;
   }
 
+  /// Fills in what a database upgrade added to the trips (their logged time),
+  /// once. Cheap when there's nothing to do.
+  Future<void> upgradeTrips() async {
+    final stale = Sqflite.firstIntValue(
+            await db.rawQuery('SELECT COUNT(*) FROM trips WHERE logged_s IS NULL')) ??
+        0;
+    if (stale == 0) return;
+    await rebuildTrips();
+    _notify();
+  }
+
   Map<String, Object?> _tripRow(int id, TripStats s) => {
         'id': id,
         'end_t': s.endMs,
         'distance_m': s.distanceM,
         'moving_s': s.movingS,
+        'logged_s': s.loggedS,
         'max_speed': s.maxSpeedKmh,
         'points': s.pointCount,
         'catches': jsonEncode(s.catchesByAngler),
@@ -317,6 +330,7 @@ class Repository {
         endMs: r['end_t'] as int,
         distanceM: (r['distance_m'] as num).toDouble(),
         movingS: r['moving_s'] as int,
+        loggedS: (r['logged_s'] as int?) ?? 0,
         maxSpeedKmh: (r['max_speed'] as num?)?.toDouble(),
         pointCount: r['points'] as int,
         catchesByAngler: (jsonDecode(r['catches'] as String) as Map).cast<String, int>(),
@@ -397,6 +411,13 @@ class Repository {
     });
     _notify();
     return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+  }
+
+  /// Takes the logger's reset time when the phone has none of its own (after
+  /// a reinstall, say). Nothing is queued: the logger already has it.
+  Future<void> adoptMeterReset(DateTime at) async {
+    await _setSetting(db, _meterResetKey, '${at.millisecondsSinceEpoch}');
+    _notify();
   }
 
   /// Called once the logger has accepted the reset sent at [sent]. A newer

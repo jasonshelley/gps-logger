@@ -7,6 +7,7 @@ import '../main.dart';
 import '../sync/permissions.dart';
 import '../sync/sync_controller.dart';
 import 'format.dart';
+import 'meter_cards.dart';
 
 class SyncScreen extends StatefulWidget {
   const SyncScreen({super.key});
@@ -508,11 +509,15 @@ class _Done extends StatelessWidget {
     final s = sync.summary;
     final t = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
+    final meter = sync.meterSync == null
+        ? null
+        : LoggerMeterPanel(result: sync.meterSync!, comparison: sync.meterComparison);
     if (s.files == 0 && s.failures.isEmpty) {
       return _Centered(
         visual: const _IconBubble(Icons.check_rounded),
         title: 'All caught up',
         body: 'The logger has no new files. You can put its switch back on Logging.',
+        bodyWidget: meter,
         actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
       );
     }
@@ -535,6 +540,7 @@ class _Done extends StatelessWidget {
                 style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
           ),
         _FileList(files: sync.files),
+        if (meter != null) ...[const SizedBox(height: 16), meter],
       ]),
       actions: [
         if (trips.isNotEmpty)

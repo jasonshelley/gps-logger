@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/meter.dart';
+import '../sync/logger_meter.dart';
 import 'format.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -203,5 +204,106 @@ class TotalsCard extends StatelessWidget {
         ]),
       ),
     );
+  }
+}
+
+/// After a sync: the logger's own trip meter, and whether it matches the phone's.
+class LoggerMeterPanel extends StatelessWidget {
+  const LoggerMeterPanel({super.key, required this.result, this.comparison});
+  final MeterSyncResult result;
+  final MeterComparison? comparison;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final r = result;
+    final c = comparison;
+    final logger = r.logger;
+    // An older logger with nothing queued: nothing worth saying.
+    if (r.outcome == MeterSyncOutcome.unsupported && !r.queued) return const SizedBox.shrink();
+
+    final notes = <String>[
+      if (r.outcome == MeterSyncOutcome.sent) 'Your trip meter reset reached the logger.',
+      if (r.outcome == MeterSyncOutcome.realigned)
+        'The logger was counting from a different time, so it now counts from the phone\'s last reset.',
+      if (r.outcome == MeterSyncOutcome.adopted && logger?.resetAt != null)
+        'The phone now counts from the logger\'s last reset, ${Fmt.dayShort(logger!.resetAt!)}, ${Fmt.time(logger.resetAt!)}.',
+      if (r.outcome == MeterSyncOutcome.unsupported)
+        'The logger\'s firmware has no trip meter yet. Your reset is kept and sent once it does.',
+      if (r.outcome == MeterSyncOutcome.failed)
+        'Couldn\'t reach the logger\'s trip meter (${r.error}).${r.queued ? ' Your reset is kept for the next sync.' : ''}',
+      if (logger != null && logger.incomplete) 'The logger couldn\'t read its whole card, so its numbers may be low.',
+      if (logger != null && logger.clockNotSet)
+        'The logger hasn\'t had GPS time since it started, so new catches may not count yet.',
+      if (c != null && !c.agrees)
+        'A difference is expected if a file is still on the logger, or if catches were logged before the GPS had the time.',
+    ];
+
+    final (IconData icon, Color color, String headline) = switch ((logger, c?.agrees)) {
+      (_, true) => (Icons.check_circle_rounded, cs.primary, 'Logger\'s trip meter matches'),
+      (_, false) => (Icons.error_outline_rounded, cs.tertiary, 'Logger\'s trip meter differs'),
+      _ => (Icons.speed_rounded, cs.onSurfaceVariant, 'Logger\'s trip meter'),
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: cs.surfaceContainer, borderRadius: BorderRadius.circular(16)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 8),
+          Expanded(child: Text(headline, style: t.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
+        ]),
+        if (logger != null) ...[
+          const SizedBox(height: 10),
+          _MeterLine(
+            label: c != null && !c.agrees ? 'Logger' : null,
+            jase: logger.jase,
+            matt: logger.matt,
+            distanceM: logger.distanceM.toDouble(),
+            water: Duration(seconds: logger.waterS),
+          ),
+          if (c != null && !c.agrees) ...[
+            const SizedBox(height: 6),
+            _MeterLine(
+              label: 'Phone',
+              jase: c.phoneJase,
+              matt: c.phoneMatt,
+              distanceM: c.phone.distanceM,
+              water: c.phone.onWater,
+            ),
+          ],
+        ],
+        for (final n in notes)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(n, style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          ),
+      ]),
+    );
+  }
+}
+
+class _MeterLine extends StatelessWidget {
+  const _MeterLine({this.label, required this.jase, required this.matt, required this.distanceM, required this.water});
+  final String? label;
+  final int jase, matt;
+  final double distanceM;
+  final Duration water;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+      if (label != null)
+        SizedBox(width: 56, child: Text(label!, style: t.labelLarge?.copyWith(color: cs.onSurfaceVariant))),
+      AnglerCount('Jase', jase, dense: true),
+      AnglerCount('Matt', matt, dense: true),
+      Text(Fmt.distance(distanceM), style: t.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+      Text(Fmt.duration(water), style: t.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+    ]);
   }
 }

@@ -18,6 +18,7 @@ Future<void> main() async {
   final db = await openAppDatabase();
   final docs = await getApplicationDocumentsDirectory();
   final repo = Repository(db, logDir: Directory(p.join(docs.path, 'logs')));
+  await repo.upgradeTrips();
   runApp(CatchLogApp(services: AppServices(repo: repo, httpClient: http.Client())));
 }
 

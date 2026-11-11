@@ -8,12 +8,25 @@ import 'package:catch_log/sync/logger_session.dart';
 
 /// A pretend logger implementing docs/ble-protocol.md, for tests.
 class FakeLogger implements LoggerTransport {
-  FakeLogger(Map<String, List<int>> files, {this.chunk = 239})
+  FakeLogger(Map<String, List<int>> files, {this.chunk = 239, this.version = protocolVersion})
       : files = {for (final e in files.entries) e.key: Uint8List.fromList(e.value)};
 
   final Map<String, Uint8List> files;
   final Map<String, Uint8List> uploaded = {};
   final int chunk;
+
+  /// The protocol version it reports in HELLO. Version 1 has no trip meter.
+  final int version;
+
+  /// The trip meter (v2). [meterReset] is UTC seconds, 0 = never reset.
+  int meterReset = 0;
+  int jase = 0, matt = 0, distanceM = 0, waterS = 0, meterFlags = 0;
+
+  /// Answer METER_RESET with this error code instead (5 = card not writable).
+  int? meterResetError;
+
+  /// Answer METER_RESET with this reset time instead of the one sent.
+  int? meterResetAnswer;
 
   /// Fault injection.
   int? dropChunkAt; // skip the DATA message at this offset
@@ -38,6 +51,16 @@ class FakeLogger implements LoggerTransport {
   void _emit(List<int> b) => scheduleMicrotask(() => _tx.add(Uint8List.fromList(b)));
 
   Uint8List _u32(int v) => Uint8List(4)..buffer.asByteData().setUint32(0, v, Endian.little);
+  void _emitMeter() => _emit([
+        Evt.meter,
+        ..._u32(meterReset),
+        ..._u16(jase),
+        ..._u16(matt),
+        ..._u32(distanceM),
+        ..._u32(waterS),
+        meterFlags,
+      ]);
+
   Uint8List _u16(int v) => Uint8List(2)..buffer.asByteData().setUint16(0, v, Endian.little);
 
   @override
@@ -45,10 +68,25 @@ class FakeLogger implements LoggerTransport {
     if (_disconnected.isCompleted) throw StateError('not connected');
     final op = data[0];
     sent.add(op);
-    final name = ascii.decode(data.sublist(op == Cmd.confirm ? 5 : 1));
+    final name = op == Cmd.get || op == Cmd.confirm ? ascii.decode(data.sublist(op == Cmd.confirm ? 5 : 1)) : '';
+    if (version < meterProtocolVersion && (op == Cmd.meter || op == Cmd.meterReset)) {
+      _emit([Evt.error, 1, ...ascii.encode('unknown command')]);
+      return;
+    }
     switch (op) {
       case Cmd.hello:
-        _emit([Evt.hello, protocolVersion, ..._u16(chunk)]);
+        _emit([Evt.hello, version, ..._u16(chunk)]);
+      case Cmd.meter:
+        _emitMeter();
+      case Cmd.meterReset:
+        if (data.length < 5) {
+          _emit([Evt.error, 9, ...ascii.encode('short')]);
+        } else if (meterResetError != null) {
+          _emit([Evt.error, meterResetError!, ...ascii.encode('no')]);
+        } else {
+          meterReset = meterResetAnswer ?? ByteData.sublistView(data).getUint32(1, Endian.little);
+          _emitMeter();
+        }
       case Cmd.list:
         final names = files.keys.toList()..sort();
         for (final n in names) {

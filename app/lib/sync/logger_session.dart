@@ -263,6 +263,18 @@ class LoggerSession {
         const Duration(seconds: 30), 'the logger to confirm');
   }
 
+  /// Reads the logger's trip meter (protocol v2).
+  Future<MeterEvent> meter() async => await _request(encodeMeter(), (e) => e is MeterEvent || e is ErrorEvent,
+      const Duration(seconds: 10), 'the trip meter') as MeterEvent;
+
+  /// Tells the logger its trip meter counts from [reset] (protocol v2). It
+  /// rebuilds the meter from its logs before answering, so allow a while.
+  Future<MeterEvent> meterReset(DateTime reset) async => await _request(
+      encodeMeterReset(reset.toUtc().millisecondsSinceEpoch ~/ 1000),
+      (e) => e is MeterEvent || e is ErrorEvent,
+      const Duration(seconds: 30),
+      'the logger to reset its trip meter') as MeterEvent;
+
   void dispose() {
     _sub.cancel();
     _fail(TransferException('Closed', retryable: false));

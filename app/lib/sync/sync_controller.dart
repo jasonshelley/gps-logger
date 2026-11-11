@@ -52,12 +52,18 @@ class SyncSummary {
 /// Runs one sync: permission, Bluetooth, scan, connect, then for each file
 /// download, check CRC, store, and only then confirm to the logger.
 class SyncController extends ChangeNotifier {
-  SyncController(this.repo, {this.meter = const NoLoggerMeter()});
+  SyncController(this.repo, {this.meter = const BleLoggerMeter()});
 
   final Repository repo;
 
-  /// Sends a trip meter reset made on the phone to the logger.
+  /// The logger's trip meter commands.
   final LoggerMeter meter;
+
+  /// What this sync did with the trip meter, and the logger's reading.
+  MeterSyncResult? meterSync;
+
+  /// The logger's meter next to the phone's, once the files are in.
+  MeterComparison? meterComparison;
 
   SyncPhase phase = SyncPhase.idle;
   String? deviceName;
@@ -102,6 +108,8 @@ class SyncController extends ChangeNotifier {
     _cancelled = false;
     _finishingFile = false;
     summary = SyncSummary();
+    meterSync = null;
+    meterComparison = null;
     files = [];
     currentIndex = -1;
     deviceName = null;
@@ -222,9 +230,11 @@ class SyncController extends ChangeNotifier {
       return;
     }
 
-    // 5. A trip meter reset made on the phone since the last sync. It never
-    // fails the sync: if it can't be sent it stays queued.
-    await sendQueuedMeterReset(repo, meter, _session!, hello);
+    // 5. Bring the logger's trip meter in step with the phone's: send a reset
+    // made on the phone, and read the logger's meter. It never fails the sync:
+    // a reset that can't be sent stays queued. Transferring files doesn't
+    // change the logger's meter, so this reading still holds at the end.
+    meterSync = await syncLoggerMeter(repo, meter, _session!, hello);
     if (_cancelled) return;
 
     // 6. Each file: download, check, store, confirm.
@@ -291,6 +301,14 @@ class SyncController extends ChangeNotifier {
           return;
         }
       }
+    }
+    final loggerMeter = meterSync?.logger;
+    if (loggerMeter != null) {
+      meterComparison = MeterComparison(await repo.meter(), loggerMeter);
+      final c = meterComparison!;
+      debugPrint('[sync] logger meter: Jase ${loggerMeter.jase}, Matt ${loggerMeter.matt}, ${loggerMeter.distanceM} m, '
+          '${loggerMeter.waterS} s, flags ${loggerMeter.flags}; phone: Jase ${c.phoneJase}, Matt ${c.phoneMatt}, '
+          '${c.phone.distanceM.round()} m, ${c.phone.onWater.inSeconds} s; ${c.agrees ? 'they agree' : 'they differ'}');
     }
     _set(SyncPhase.done);
   }

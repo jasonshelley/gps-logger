@@ -18,7 +18,11 @@ Future<Database> openAppDatabase({DatabaseFactory? factory, String? path}) async
         await _createSettings(db);
       },
       onUpgrade: (db, from, to) async {
-        if (from < 2) await _createSettings(db);
+        if (from < 2) {
+          await _createSettings(db);
+          // Filled in by Repository.upgradeTrips() at the next start.
+          await db.execute('ALTER TABLE trips ADD COLUMN logged_s INTEGER');
+        }
       },
     ),
   );
@@ -77,6 +81,7 @@ Future<void> _create(Database db) async {
       end_t INTEGER NOT NULL,
       distance_m REAL NOT NULL,
       moving_s INTEGER NOT NULL,
+      logged_s INTEGER,
       max_speed REAL,
       points INTEGER NOT NULL,
       catches TEXT NOT NULL,
@@ -95,6 +100,7 @@ Future<void> _create(Database db) async {
   await b.commit(noResult: true);
 }
 
-/// Version 2: small key-value settings, such as the trip meter's reset time.
+/// Version 2: small key-value settings, such as the trip meter's reset time,
+/// and each trip's logged time (`trips.logged_s`).
 Future<void> _createSettings(Database db) =>
     db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');

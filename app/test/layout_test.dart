@@ -4,6 +4,8 @@ import 'package:catch_log/core/crc32.dart';
 import 'package:catch_log/data/database.dart';
 import 'package:catch_log/data/repository.dart';
 import 'package:catch_log/main.dart';
+import 'package:catch_log/ble/protocol.dart';
+import 'package:catch_log/sync/logger_meter.dart';
 import 'package:catch_log/sync/sync_controller.dart';
 import 'package:catch_log/ui/catch_card.dart';
 import 'package:catch_log/ui/home_screen.dart';
@@ -176,6 +178,11 @@ void main() {
           FileProgress('gpsnodate.csv', 120),
         ];
         sync.currentIndex = 2;
+        sync.meterSync = const MeterSyncResult(MeterSyncOutcome.sent,
+            MeterEvent(resetUtcSeconds: 1794384000, jase: 12, matt: 9, distanceM: 48211, waterS: 15300, flags: 1));
+        sync.meterComparison = MeterComparison(
+            const MeterReading(catchesByAngler: {'Jase': 11, 'Matt': 9}, distanceM: 48000, onWater: Duration(seconds: 15200), trips: 2),
+            sync.meterSync!.logger!);
         sync.summary = SyncSummary()
           ..files = 3
           ..alreadyHad = 1
@@ -200,6 +207,8 @@ void main() {
         onWater: Duration(hours: 1287, minutes: 59),
         trips: 1342,
       );
+      const loggerBig = MeterEvent(
+          resetUtcSeconds: 1794384000, jase: 1284, matt: 977, distanceM: 12873450, waterS: 4636740, flags: 3);
       for (final b in Brightness.values) {
         await tester.pumpWidget(_app(
           AppServices(
@@ -211,6 +220,17 @@ void main() {
               const TripMeterCard(reading: MeterReading.zero, since: null, resetQueued: false, onReset: _noop),
               TotalsCard(reading: big, firstTrip: DateTime.utc(2025, 12, 28)),
               const TotalsCard(reading: MeterReading.zero),
+              for (final o in MeterSyncOutcome.values)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: LoggerMeterPanel(
+                    result: MeterSyncResult(o, o == MeterSyncOutcome.failed || o == MeterSyncOutcome.unsupported ? null : loggerBig,
+                        queued: true, error: 'The logger can\'t read or write its SD card'),
+                    comparison: o == MeterSyncOutcome.failed || o == MeterSyncOutcome.unsupported
+                        ? null
+                        : MeterComparison(o == MeterSyncOutcome.inStep ? big : MeterReading.zero, loggerBig),
+                  ),
+                ),
             ]),
           ),
           scale,
