@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 #include <SD.h>
-#include <TinyGPSPlus.h>
 
 #include <algorithm>
 #include <string>
@@ -11,6 +10,7 @@
 #include "clock.h"
 #include "config.h"
 #include "log_reader.h"
+#include "move_meter.h"
 #include "storage.h"
 
 namespace trip {
@@ -18,26 +18,19 @@ namespace trip {
 static Meter s_meter;
 static bool s_needRebuild = false;
 
-// The previous track point, for pairing with the next one.
-static bool s_havePrev = false;
-static time_t s_prevUtc = 0;
-static double s_prevLat = 0, s_prevLng = 0;
+// Distance and time on the water, from the track points since the reset (docs/metrics.md).
+static movemeter::Meter s_move;
 
 // ---- Accumulating ----
 
-static void addTrackPoint(time_t utc, double lat, double lng) {
-  if (s_havePrev && s_prevUtc >= s_meter.resetUtc && utc >= s_prevUtc &&
-      utc - s_prevUtc <= SEGMENT_GAP_S) {
-    s_meter.distanceM += TinyGPSPlus::distanceBetween(s_prevLat, s_prevLng, lat, lng);
-    s_meter.waterS += (uint32_t)(utc - s_prevUtc);
-  }
-  s_havePrev = true;
-  s_prevUtc = utc;
-  s_prevLat = lat;
-  s_prevLng = lng;
+static void addTrackPoint(time_t utc, double lat, double lng, double hdop) {
+  if (utc < s_meter.resetUtc) return;  // the first point after the reset starts a segment
+  s_move.add(utc, lat, lng, hdop);
+  s_meter.distanceM = s_move.distanceM();
+  s_meter.waterS = s_move.waterS();
 }
 
-void onTrackPoint(time_t utc, double lat, double lng) { addTrackPoint(utc, lat, lng); }
+void onTrackPoint(time_t utc, double lat, double lng, double hdop) { addTrackPoint(utc, lat, lng, hdop); }
 
 void onCatch(Angler who, time_t utc) {
   if (utc != 0 && utc < s_meter.resetUtc) return;
@@ -102,8 +95,8 @@ static void scanFile(const char* path) {
     time_t t = clk::parseIsoUtc(f[COL_TIME]);
     if (t == 0) return;
     if (strcmp(f[COL_TYPE], "track") == 0) {
-      if (!*f[COL_LAT] || !*f[COL_LON]) return;
-      addTrackPoint(t, atof(f[COL_LAT]), atof(f[COL_LON]));
+      if (!*f[COL_LAT] || !*f[COL_LON] || !*f[COL_HDOP]) return;
+      addTrackPoint(t, atof(f[COL_LAT]), atof(f[COL_LON]), atof(f[COL_HDOP]));
     } else if (strcmp(f[COL_TYPE], "catch") == 0 && t >= s_meter.resetUtc) {
       if (strncmp(f[COL_COMMENT], "Jase", 4) == 0) s_meter.jase++;
       else if (strncmp(f[COL_COMMENT], "Matt", 4) == 0) s_meter.matt++;
@@ -115,7 +108,7 @@ static void rebuild() {
   time_t reset = s_meter.resetUtc;
   s_meter = Meter();
   s_meter.resetUtc = reset;
-  s_havePrev = false;
+  s_move.clear();
 
   if (!storage::mounted()) {
     s_needRebuild = true;

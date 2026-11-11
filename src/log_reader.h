@@ -9,6 +9,7 @@ enum LogCol {
   COL_TIME = 1,
   COL_LAT = 2,
   COL_LON = 3,
+  COL_HDOP = 7,
   COL_COMMENT = 13,
   LOG_COLS = 14,
 };

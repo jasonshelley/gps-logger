@@ -19,7 +19,7 @@ struct DayStats {
   char date[9] = "";           // local YYYYMMDD
   uint32_t points = 0;         // track points today
   uint32_t jase = 0, matt = 0; // catches today
-  double distanceM = 0;        // along today's track points
+  double distanceM = 0;        // moved today (movement rule, docs/metrics.md)
 };
 
 namespace tracklog {

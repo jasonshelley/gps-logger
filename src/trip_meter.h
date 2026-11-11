@@ -3,12 +3,11 @@
 //
 // Counts, since the reset time (UTC):
 //   - catches per angler (catch rows at or after the reset time)
-//   - distance along the logged track, in metres
+//   - distance moved, in metres
 //   - time on the water, in seconds
-// Distance and time come from pairs of consecutive track points that are both
-// at or after the reset time and no more than SEGMENT_GAP_S apart. So time on
-// the water is time spent logging with a good fix, the same span the GPX track
-// segments cover. Gaps where the logger was off or had no fix don't count.
+// Distance and time follow the movement rule in docs/metrics.md (move_meter.h),
+// over the track points at or after the reset time, so GPS jitter while the
+// logger sits still adds nothing.
 //
 // The reset time is kept in /trip.txt on the card. At boot, and after a reset,
 // the meter is rebuilt from every log file dated on or after the reset's local
@@ -39,7 +38,8 @@ bool needsRebuild();
 void tick();
 
 // Live updates, called by the track logger for each row it logs.
-void onTrackPoint(time_t utc, double lat, double lng);
+// Pass lat, lng and hdop as written to the log, so the live meter matches a rebuild.
+void onTrackPoint(time_t utc, double lat, double lng, double hdop);
 void onCatch(Angler who, time_t utc);  // utc 0 if the clock isn't set yet (still counts)
 
 enum class ResetResult { Applied, Unchanged, SaveFailed };

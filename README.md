@@ -121,9 +121,11 @@ The logger never waits for a computer. It boots and logs the same with or withou
 
 The logger reads the GPS and writes a track point:
 
-- every 5 s or every 10 m, whichever comes first, while moving
-- every 60 s while stationary, meaning under 2 km/h and less than 10 m from the last point
+- every 5 s while moving
+- every 60 s otherwise
 - only when HDOP is 5 or less
+
+"Moving" means the movement rule in [docs/metrics.md](docs/metrics.md) confirmed a move in the last 2 minutes: the position stayed at least max(25 m, 30 m × HDOP) from where it was for 30 s. The point that completes a move is always logged. GPS speed isn't used, because it reads several km/h when the logger is sitting still indoors. So a logger left on a desk writes one point a minute, however much its position wanders.
 
 Pressing **Jase** or **Matt** writes a catch record straight away at the current position, and shows "Jase catch!" or "Matt catch!" for 3 s. If the current fix is poor, the catch uses the last good fix and records how old it is. The banner turns red with "NOT SAVED" if the card write failed.
 
@@ -151,10 +153,10 @@ The trip meter works like a car's: it counts from the last reset until you reset
 | Shows | Counts since the reset |
 |---|---|
 | Jase / Matt | catches |
-| distance | metres along the logged track |
+| distance | metres moved |
 | time (h:mm) | time on the water |
 
-Distance and time on the water both come from consecutive track points that are no more than 15 minutes apart. So time on the water means time spent in Logging mode with a good fix, including time at anchor, since stationary points are logged every minute. Time with the logger off, in Transfer mode or without a fix doesn't count, and neither does the straight line across that gap.
+Both follow the movement rule in [docs/metrics.md](docs/metrics.md), which the phone app uses too. A move only counts once the position has gone at least 25 m from where it was (more at a worse HDOP) and stayed out for 30 s, so GPS jitter while the logger sits still adds nothing. Time on the water runs from the first move to the last in each stretch of logging, so time at anchor between moves counts, but time on a desk, or waiting at the ramp before setting off, doesn't. A gap of over 15 minutes (logger off, in Transfer mode or without a fix) starts a new stretch, and neither the time nor the straight line across the gap counts.
 
 The reset time is kept in `/trip.txt` on the card. At boot the logger rebuilds the meter from every log file since that date. The app can reset the meter while it's away from the logger: the reset is sent at the next connection and counts from the moment it was pressed. Details are in [docs/ble-protocol.md](docs/ble-protocol.md#trip-meter-v2).
 
@@ -261,6 +263,7 @@ src/gps.*               UART1 + TinyGPSPlusPlus, fix filter, lock/comms state
 src/clock.*             system clock from GPS, Sydney local time
 src/track_logger.*      log rule, catches, buffer and flush, daily CSV, today's stats
 src/trip_meter.*        trip meter: reset time in /trip.txt, rebuild from logs, live counts
+src/move_meter.*        movement rule: distance moved and time on the water (docs/metrics.md)
 src/log_reader.*        reads log CSV rows (for the rebuilds)
 src/storage.*           SD mount/retry, listing, move to /uploaded
 src/ble_transfer.*      NimBLE GATT transfer service
@@ -268,7 +271,25 @@ src/crc32.*             CRC-32 shared with the phone page
 src/console.*           USB serial console
 src/inputs.*            debounced buttons and switch
 web/index.html          phone page (Web Bluetooth, CSV → GPX)
-docs/                   requirements and protocol
+docs/                   requirements, BLE protocol, movement and trip metrics
+test/test_metrics/      native unit tests for the movement rule
+test-data/              log fixtures for those tests (see its README)
+tools/metrics.py        reference implementation of docs/metrics.md
+tools/make_fixtures.py  makes the fixtures in test-data/
+```
+
+## Tests
+
+The movement rule (`src/move_meter.cpp`) has unit tests that run on the PC, including the two log fixtures in `test-data/`:
+
+```
+pio test -e native
+```
+
+That needs a host C++ compiler (gcc or clang) on the PATH, and has to be run from the project folder so the tests find `test-data/`. The reference implementation gives the same numbers without a compiler:
+
+```
+python tools/metrics.py test-data/stationary-desk.csv test-data/moving-noisy.csv
 ```
 
 ## Not yet tested on hardware

@@ -6,6 +6,7 @@
 #include "clock.h"
 #include "config.h"
 #include "log_reader.h"
+#include "move_meter.h"
 #include "storage.h"
 #include "trip_meter.h"
 
@@ -35,12 +36,18 @@ static bool s_needRebuild = false;
 static uint32_t s_noDateJase = 0, s_noDateMatt = 0;
 static char s_noDateDay[9] = "";
 
-// Last logged track point, for the log rule and today's distance.
-static bool s_haveLast = false;
-static bool s_lastInSession = false;  // false when seeded from the card at boot
-static double s_lastLat = 0, s_lastLng = 0;
-static time_t s_lastUtc = 0;
-static uint32_t s_lastMs = 0;
+static_assert(MAX_HDOP == movemeter::kMaxHdop, "the GPS filter and the movement rule must agree");
+
+// Today's distance: the movement rule over today's logged points.
+static movemeter::Meter s_dayMove;
+
+// The log rule runs the movement rule over every good fix (not just the logged
+// ones) to decide whether we're moving.
+static movemeter::Meter s_detector;
+static bool s_haveLogged = false;  // a point logged since boot
+static uint32_t s_lastLogMs = 0;
+static bool s_haveMove = false;
+static uint32_t s_lastMoveMs = 0;
 
 const char* anglerName(Angler a) { return a == Angler::Jase ? "Jase" : "Matt"; }
 
@@ -162,14 +169,17 @@ bool flush() {
   return ok;
 }
 
-// ---- Rebuilding today's numbers from the card ----
-
-// Distance counts between consecutive track points no more than SEGMENT_GAP_S
-// apart, the same rule as the trip meter and the GPX segments.
-static bool sameSegment(time_t prevUtc, time_t utc) {
-  return prevUtc != 0 && utc >= prevUtc && utc - prevUtc <= SEGMENT_GAP_S;
+// A value as the log writes it, so the live meters see exactly what a rebuild
+// (or the phone app) reads back from the file.
+static double asLogged(double v, int decimals) {
+  char tmp[24];
+  snprintf(tmp, sizeof(tmp), "%.*f", decimals, v);
+  return atof(tmp);
 }
 
+// ---- Rebuilding today's numbers from the card ----
+
+// The card's last track point, to seed the last good fix.
 struct ScanState {
   bool havePrev;
   double prevLat, prevLng;
@@ -183,8 +193,10 @@ static void scanDayFile(const char* path, ScanState& st) {
       double lat = atof(f[COL_LAT]), lng = atof(f[COL_LON]);
       time_t t = clk::parseIsoUtc(f[COL_TIME]);
       s_stats.points++;
-      if (st.havePrev && sameSegment(st.prevUtc, t))
-        s_stats.distanceM += TinyGPSPlus::distanceBetween(st.prevLat, st.prevLng, lat, lng);
+      if (t != 0 && *f[COL_HDOP]) {
+        s_dayMove.add(t, lat, lng, atof(f[COL_HDOP]));
+        s_stats.distanceM = s_dayMove.distanceM();
+      }
       st.havePrev = true;
       st.prevLat = lat;
       st.prevLng = lng;
@@ -200,6 +212,7 @@ static void rebuild(const char* day) {
   s_stats = DayStats();
   snprintf(s_stats.date, sizeof(s_stats.date), "%s", day);
   s_stats.known = true;
+  s_dayMove.clear();
 
   if (!storage::mounted()) {
     s_needRebuild = true;  // try again once the card is back
@@ -213,24 +226,15 @@ static void rebuild(const char* day) {
     fileFor(day, path, sizeof(path));
     scanDayFile(path, st);
 
-    // Continue from the card's last point unless this session has a newer one
-    // (at midnight the last point is still yesterday's, which is newer than nothing).
-    if (st.havePrev && (!s_haveLast || st.prevUtc > s_lastUtc)) {
-      s_haveLast = true;
-      s_lastInSession = false;
-      s_lastLat = st.prevLat;
-      s_lastLng = st.prevLng;
-      s_lastUtc = st.prevUtc;
-      // Seed the last good fix so a catch made before the first fix still has a position.
-      if (!gpsrx::lastGoodFix().valid) {
-        GoodFix g;
-        g.valid = true;
-        g.lat = st.prevLat;
-        g.lng = st.prevLng;
-        g.utc = st.prevUtc;
-        g.atMs = 0;
-        gpsrx::setLastGoodFix(g);
-      }
+    // Seed the last good fix so a catch made before the first fix still has a position.
+    if (st.havePrev && !gpsrx::lastGoodFix().valid) {
+      GoodFix g;
+      g.valid = true;
+      g.lat = st.prevLat;
+      g.lng = st.prevLng;
+      g.utc = st.prevUtc;
+      g.atMs = 0;
+      gpsrx::setLastGoodFix(g);
     }
   }
   if (s_noDateJase || s_noDateMatt) {
@@ -260,14 +264,16 @@ static void ensureDay() {
 
 void begin() { s_lastFlushMs = millis(); }
 
-static bool shouldLog(const GoodFix& fix, uint32_t nowMs, double& movedM) {
-  movedM = 0;
-  if (!s_haveLast) return true;
-  movedM = TinyGPSPlus::distanceBetween(s_lastLat, s_lastLng, fix.lat, fix.lng);
-  if (!s_lastInSession) return true;  // first point since boot
-  uint32_t dt = nowMs - s_lastMs;
-  if (movedM >= LOG_MIN_DISTANCE_M) return true;
-  bool moving = fix.speedValid && fix.speedKmh >= STATIONARY_SPEED_KMH;
+// The log rule (docs/metrics.md, "Logging"). Called for every good fix.
+static bool shouldLog(const GoodFix& fix, uint32_t nowMs) {
+  bool moved = s_detector.add(fix.utc, fix.lat, fix.lng, fix.hdop) > 0;
+  if (moved) {
+    s_haveMove = true;
+    s_lastMoveMs = nowMs;
+  }
+  if (!s_haveLogged || moved) return true;  // first point since boot, or a move
+  uint32_t dt = nowMs - s_lastLogMs;
+  bool moving = s_haveMove && nowMs - s_lastMoveMs < LOG_MOVING_HOLD_MS;
   if (moving && dt >= LOG_MIN_INTERVAL_MS) return true;
   return dt >= LOG_STATIONARY_INTERVAL_MS;
 }
@@ -275,8 +281,7 @@ static bool shouldLog(const GoodFix& fix, uint32_t nowMs, double& movedM) {
 void onLocation(const GoodFix& fix, uint32_t nowMs) {
   if (!fix.valid || fix.utc == 0) return;  // track points need a date for the file name
   ensureDay();
-  double movedM;
-  if (!shouldLog(fix, nowMs, movedM)) return;
+  if (!shouldLog(fix, nowMs)) return;
 
   char day[9];
   clk::localDateStamp(fix.utc, day);
@@ -284,17 +289,15 @@ void onLocation(const GoodFix& fix, uint32_t nowMs) {
   formatRow(row, sizeof(row), "track", fix.utc, fix, -1, "");
   push(day, row);
 
+  double lat = asLogged(fix.lat, 6), lng = asLogged(fix.lng, 6), hdop = asLogged(fix.hdop, 1);
   if (strcmp(day, s_stats.date) == 0) {
     s_stats.points++;
-    if (s_haveLast && sameSegment(s_lastUtc, fix.utc)) s_stats.distanceM += movedM;
+    s_dayMove.add(fix.utc, lat, lng, hdop);
+    s_stats.distanceM = s_dayMove.distanceM();
   }
-  trip::onTrackPoint(fix.utc, fix.lat, fix.lng);
-  s_haveLast = true;
-  s_lastInSession = true;
-  s_lastLat = fix.lat;
-  s_lastLng = fix.lng;
-  s_lastUtc = fix.utc;
-  s_lastMs = nowMs;
+  trip::onTrackPoint(fix.utc, lat, lng, hdop);
+  s_haveLogged = true;
+  s_lastLogMs = nowMs;
 }
 
 bool logCatch(Angler who, uint32_t nowMs) {

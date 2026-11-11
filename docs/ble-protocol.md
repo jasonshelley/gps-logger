@@ -114,12 +114,12 @@ From the reset time `reset` (UTC) onwards:
 | Field | Meaning |
 |---|---|
 | `jase`, `matt` | Catch rows whose `time_utc` is at or after `reset` |
-| `distance_m` | Metres along the logged track: the sum of the distances between consecutive track points |
-| `water_s` | Time on the water in seconds: the sum of the times between those same consecutive track points |
+| `distance_m` | Metres moved, by the movement rule in [metrics.md](metrics.md) |
+| `water_s` | Time on the water in seconds, by the same rule |
 
-A pair of consecutive track points only counts towards `distance_m` and `water_s` if both are at or after `reset` and they're at most **15 minutes** apart. A longer gap means the logger was off, in Transfer mode, or had no good fix (HDOP over 5), so neither the time nor the straight line across the gap counts. That's the same 15-minute rule the phone page uses to split GPX track segments.
+Both come from the track rows at or after `reset`, using the movement rule in **[metrics.md](metrics.md)**. The app must use that rule for its own figures. In short: only points with HDOP ≤ 5 count. A move counts once the position has stayed at least max(25 m, 30 m × HDOP) from the last counted position for 30 s. Time on the water runs from each segment's first move to its last, so time at anchor between moves counts. A gap of over 15 minutes between points starts a new segment, and neither the time nor the straight line across the gap counts. That's the same 15-minute rule the phone page uses to split GPX track segments.
 
-So "time on the water" means time spent logging with a good fix. In Logging mode, stationary points come every 60 s, so time spent at anchor still counts. A logger left in Logging mode on a windowsill with a fix also counts as on the water.
+So GPS jitter while the logger sits still, on a desk or at the berth, adds nothing to either figure. The first row at or after `reset` starts a segment.
 
 Counts are rebuilt from the log files (see below). So deleting a log file from the card with `rm` removes its rows from the meter at the next rebuild.
 
@@ -186,6 +186,7 @@ sequenceDiagram
 |---|---|
 | 1 | File transfer: HELLO, LIST, GET, CONFIRM, ABORT |
 | 2 | Trip meter: METER (`0x06`), METER_RESET (`0x07`), METER event (`0x87`). Nothing in v1 changed. A client can check `version >= 2` in HELLO before using the meter, since a v1 logger answers METER with ERROR 1 (unknown command) |
+| 2 (revised) | `distance_m` and `water_s` now follow the movement rule in [metrics.md](metrics.md) instead of summing every pair of consecutive points, which counted GPS jitter. The message formats didn't change, so the version number didn't either. A logger with the earlier firmware reports the larger, jitter-inflated figures |
 
 ## Flow control
 

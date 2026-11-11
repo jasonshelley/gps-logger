@@ -43,18 +43,19 @@
 
 // ---- Fix quality and the log rule (requirements Q6, Q7) ----
 #define MAX_HDOP                  5.0   // track points and "has lock" need HDOP <= this
-#define LOG_MIN_INTERVAL_MS       5000  // moving: log at least every 5 s ...
-#define LOG_MIN_DISTANCE_M        10.0  // ... or as soon as we've moved 10 m
-#define LOG_STATIONARY_INTERVAL_MS 60000 // stationary: one point a minute
-#define STATIONARY_SPEED_KMH      2.0   // below this (and < 10 m moved) counts as stationary
+// Log rule. "Moving" means the movement rule (src/move_meter.h, docs/metrics.md)
+// confirmed a move in the last LOG_MOVING_HOLD_MS. A fix that completes a move is
+// always logged. GPS speed isn't used: indoors it reads several km/h while still.
+#define LOG_MIN_INTERVAL_MS       5000  // moving: a point every 5 s
+#define LOG_STATIONARY_INTERVAL_MS 60000 // otherwise: one point a minute
+#define LOG_MOVING_HOLD_MS        120000
 #define LOCK_TIMEOUT_MS           5000  // "has lock" = a good fix within this long
 #define GPS_COMMS_TIMEOUT_MS      1000  // "comms OK" = a byte from the GPS within this long
 
-// Two consecutive track points further apart than this are in separate track
-// segments (the logger was off or had no good fix in between). Distance and
-// time on the water aren't counted across the gap. The phone page splits GPX
-// segments at the same 15 minutes.
-#define SEGMENT_GAP_S             900
+// Track points more than 15 minutes apart are in separate segments (the logger
+// was off or had no good fix in between). The movement rule's constants, this
+// gap among them, are in src/move_meter.h, since the native tests build that
+// file without this one. The phone page splits GPX segments at the same 15 min.
 
 // ---- Trip meter ----
 #define TRIP_FILE                 "/trip.txt"
