@@ -6,6 +6,7 @@ import '../main.dart';
 import 'format.dart';
 import 'meter_cards.dart';
 import 'route_thumbnail.dart';
+import 'erase.dart';
 import 'samples.dart';
 import 'sync_screen.dart';
 import 'trip_screen.dart';
@@ -116,6 +117,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _eraseAll(_HomeData data) async {
+    final catches = data.totals.catches;
+    if (!await confirmEraseAll(context, trips: data.trips.length, catches: catches)) return;
+    await _repo.eraseAll();
+    if (!mounted) return;
+    // The logger is only ever erased on a live connection, so offer it now
+    // rather than queueing it for the next sync.
+    final logger = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        icon: const Icon(Icons.check_rounded),
+        title: const Text('This phone is erased'),
+        content: const Text('The logger still has its log files and its own trip meter. '
+            'To erase those too, put its switch on Transfer.\n\n'
+            'You can also do this later from the menu: Erase logger files.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Not now')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Erase the logger')),
+        ],
+      ),
+    );
+    if (logger == true && mounted) await Navigator.of(context).push(EraseLoggerScreen.route());
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_HomeData>(
@@ -139,6 +164,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   onSelected: (v) {
                     if (v == 'samples') _loadSamples();
                     if (v == 'remove') _removeSamples();
+                    if (v == 'erase' && data != null) _eraseAll(data);
+                    if (v == 'eraseLogger') Navigator.of(context).push(EraseLoggerScreen.route());
                     if (v == 'about') _showAbout();
                   },
                   itemBuilder: (_) => [
@@ -146,6 +173,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       const PopupMenuItem(value: 'samples', child: Text('Add sample trips')),
                     if (data?.hasSamples == true)
                       const PopupMenuItem(value: 'remove', child: Text('Remove sample trips')),
+                    if (data != null && (data.trips.isNotEmpty || data.undated.isNotEmpty))
+                      const PopupMenuItem(value: 'erase', child: Text('Erase all data…')),
+                    const PopupMenuItem(value: 'eraseLogger', child: Text('Erase logger files…')),
                     const PopupMenuItem(value: 'about', child: Text('About')),
                   ],
                 ),

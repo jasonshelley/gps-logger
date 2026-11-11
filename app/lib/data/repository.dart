@@ -210,7 +210,9 @@ class Repository {
           where: 'name LIKE ?', whereArgs: ['$samplePrefix%'], limit: 1))
       .isNotEmpty;
 
-  /// Deletes the sample trips and nothing else.
+  /// Deletes the sample trips and nothing else: their points, catches,
+  /// files and cached conditions. Real trips, the trip meter's reset and
+  /// settings are kept.
   Future<void> removeSamples() async {
     final files = await db.query('files', where: 'name LIKE ?', whereArgs: ['$samplePrefix%']);
     await db.transaction((txn) async {
@@ -229,6 +231,35 @@ class Repository {
       }
     }
     await rebuildTrips();
+    // Conditions cached for trips that no longer exist.
+    await db.delete('trip_conditions', where: 'trip_id NOT IN (SELECT id FROM trips)');
+    _previewCache.clear();
+    _notify();
+  }
+
+  /// Settings that are data rather than preferences: "Erase all data"
+  /// removes these and keeps every other setting.
+  static const _dataSettings = [_meterResetKey, _meterPendingKey];
+
+  /// Deletes everything synced or added to this phone: trips (real and
+  /// sample), points, catches, received files and their copies on disk,
+  /// cached conditions, the trip meter's reset and any reset still queued for
+  /// the logger. The app is left as it was on first run. Other settings are
+  /// kept. Photos stay in the gallery; nothing is sent to the logger.
+  Future<void> eraseAll() async {
+    await db.transaction((txn) async {
+      for (final t in ['trip_conditions', 'trips', 'catches', 'points', 'files']) {
+        await txn.delete(t);
+      }
+      await txn.delete('settings',
+          where: 'key IN (${List.filled(_dataSettings.length, '?').join(', ')})', whereArgs: _dataSettings);
+    });
+    try {
+      if (await logDir.exists()) await logDir.delete(recursive: true);
+    } catch (_) {
+      // A file we can't delete is harmless: nothing refers to it any more.
+    }
+    _previewCache.clear();
     _notify();
   }
 

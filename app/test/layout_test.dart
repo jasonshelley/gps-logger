@@ -7,7 +7,9 @@ import 'package:catch_log/main.dart';
 import 'package:catch_log/ble/protocol.dart';
 import 'package:catch_log/sync/logger_meter.dart';
 import 'package:catch_log/sync/sync_controller.dart';
+import 'package:catch_log/sync/logger_eraser.dart';
 import 'package:catch_log/ui/catch_card.dart';
+import 'package:catch_log/ui/erase.dart';
 import 'package:catch_log/ui/home_screen.dart';
 import 'package:catch_log/ui/meter_cards.dart';
 import 'package:catch_log/ui/sync_screen.dart';
@@ -37,6 +39,14 @@ class _IdleSync extends SyncController {
   @override
   Future<void> start() async {}
   void show(SyncPhase p) {
+    phase = p;
+    notifyListeners();
+  }
+}
+
+/// An erase controller that only shows the state it's given.
+class _ShownErase extends EraseLoggerController {
+  void show(EraseLoggerPhase p) {
     phase = p;
     notifyListeners();
   }
@@ -340,6 +350,85 @@ void main() {
         expect(_overflows(tester), isEmpty);
       }
       await tester.runAsync(() => repo.db.close());
+    });
+
+    sweep('erasing all data from home works and its dialogs fit at font ×$scale', (tester) async {
+      _useS21(tester);
+      final tmp = Directory.systemTemp.createTempSync('catchlog');
+      final repo = await tester.runAsync(() => _repoWithFixtures(tmp));
+      final services = AppServices(repo: repo!, httpClient: MockClient((_) async => http.Response('', 500)));
+      Future<void> settle() async {
+        for (var i = 0; i < 4; i++) {
+          await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+          await tester.pump(const Duration(milliseconds: 150));
+        }
+      }
+
+      await tester.pumpWidget(_app(services, const HomeScreen(), scale));
+      await settle();
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await settle();
+      expect(find.text('Erase logger files…'), findsOneWidget);
+      expect(_overflows(tester), isEmpty, reason: 'menu');
+      await tester.tap(find.text('Erase all data…'));
+      await settle();
+      expect(find.text('Erase all data?'), findsOneWidget);
+      expect(find.textContaining('3 trips'), findsOneWidget);
+      expect(_overflows(tester), isEmpty, reason: 'what goes');
+      await tester.tap(find.text('Continue'));
+      await settle();
+      final erase = find.widgetWithText(FilledButton, 'Erase');
+      expect(tester.widget<FilledButton>(erase).onPressed, isNull); // not until ERASE is typed
+      await tester.enterText(find.byType(TextField), 'eras');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(erase).onPressed, isNull);
+      await tester.enterText(find.byType(TextField), 'erase');
+      await tester.pump();
+      expect(_overflows(tester), isEmpty, reason: 'type ERASE');
+      await tester.tap(erase);
+      for (var i = 0; i < 40 && !tester.any(find.text('This phone is erased')); i++) {
+        await settle();
+      }
+      expect(find.text('This phone is erased'), findsOneWidget);
+      expect(_overflows(tester), isEmpty, reason: 'offer to erase the logger');
+      expect(await tester.runAsync(() => repo.trips()), isEmpty);
+      await tester.tap(find.text('Not now'));
+      for (var i = 0; i < 40 && !tester.any(find.text('Try it with sample trips')); i++) {
+        await settle();
+      }
+      // Back to the first-run empty state.
+      expect(find.text('No trips yet'), findsOneWidget);
+      expect(find.text('Try it with sample trips'), findsOneWidget);
+      expect(_overflows(tester), isEmpty, reason: 'empty home');
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() => repo.db.close());
+    });
+
+    sweep('every erase logger state fits at font ×$scale', (tester) async {
+      _useS21(tester);
+      final c = _ShownErase()..version = 2;
+      final services = AppServices(repo: Repository(_NoDb(), logDir: Directory.systemTemp), httpClient: MockClient((_) async => http.Response('', 500)));
+      await tester.pumpWidget(_app(services, EraseLoggerScreen(controller: c), scale));
+      for (final files in [
+        const <FileEvent>[],
+        const [
+          FileEvent(48211, 'gps20261108.csv'),
+          FileEvent(683, 'gps20261109.csv'),
+          FileEvent(120344, 'gps20261110.csv'),
+          FileEvent(9000, 'gps20261111.csv'),
+          FileEvent(120, 'gpsnodate.csv'),
+        ],
+      ]) {
+        c.unsynced = files;
+        c.error = 'No logger found. Put its switch on Transfer, keep it close, and try again.';
+        c.result = const LoggerEraseResult(deletedFiles: 12);
+        for (final p in EraseLoggerPhase.values) {
+          c.show(p);
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(_overflows(tester), isEmpty, reason: '${p.name}, ${files.length} files');
+        }
+      }
+      await tester.pumpWidget(const SizedBox());
     });
   }
 

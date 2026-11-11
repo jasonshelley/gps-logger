@@ -16,7 +16,17 @@ The code is in [`app/`](../app).
 4. Trips appear on the home screen. Tap one for the map, replay, catches and conditions.
 5. The **trip meter** at the top of the home screen counts catches, distance and time on the water since you last tapped **Reset**. The **All time** card below it never resets.
 
-**Add sample trips** (⋮ menu, or the button on the empty screen) loads two days of made-up Sydney Harbour trips, for trying the app before the logger has had a GPS fix outdoors. They're dated 52 weeks back so they can't clash with real logs. **Remove sample trips** deletes only them.
+**Add sample trips** (⋮ menu, or the button on the empty screen) loads two days of made-up Sydney Harbour trips, for trying the app before the logger has had a GPS fix outdoors. They're dated 52 weeks back so they can't clash with real logs. **Remove sample trips** deletes only them, with their cached weather, and leaves real trips, the trip meter and settings alone.
+
+**Erase all data…** (⋮ menu) starts again from scratch, after two confirmations: a list of what goes, then typing ERASE. It deletes every trip (real and sample), catch, received log file, cached weather and tide, the trip meter's reset and any reset still waiting for the logger, so the trip meter and totals read zero. Other settings are kept, and photos stay in the gallery. Afterwards the app is in its first-run state, with **Try it with sample trips** on the empty screen. It doesn't touch the logger. It offers to erase the logger straight away instead.
+
+**Erase logger files…** (⋮ menu, and offered after Erase all data) deletes the log files on the logger's card, on a live connection only:
+1. It connects (the logger's switch on Transfer) and lists the files not yet synced, which are the ones that would be lost.
+2. It waits for confirmation, then erases.
+3. An erase is never queued for a later sync, because it could delete trips logged in the meantime.
+4. A logger on protocol version 2 is told to update its firmware, and nothing is sent.
+
+The ERASE_LOGS command is protocol version 3, which is still being specified in [ble-protocol.md](ble-protocol.md). Until the app implements it from the spec, `BleLoggerEraser` in [logger_eraser.dart](../app/lib/sync/logger_eraser.dart) sends nothing and asks for an app update. It isn't on the sync screen, because opening that screen starts downloading files.
 
 ## Building and running
 
@@ -65,9 +75,11 @@ flutter analyze
 
 The tests use the sample CSVs in `app/test/fixtures`. To regenerate those, run `python tool/make_fixtures.py` from `app/`.
 
+`test/erase_test.dart` covers Remove sample trips, Erase all data and the database state after each, and the logger erase flow against the fake logger with a stand-in for ERASE_LOGS.
+
 `test/metrics_test.dart` reads the shared fixtures in `test-data/` and checks the app gives the same figures as `tools/metrics.py` and the logger: 0 m and 0 s for `stationary-desk.csv`, and 6667 m and 11 205 s for `moving-noisy.csv`. It also checks the trip meter with a reset part way through a trip. The figures match exactly. The logger reports whole metres, so distances are compared rounded to the metre.
 
-`test/layout_test.dart` renders the home screen, every sync screen state, the trip stats, the catch cards and the replay banner at the S21's size (360 × 800 dp). It does this at font scales 1.0, 1.1 (the S21's setting), 1.3, 1.5 and 2.0, and fails on any overflow. The test font is wider than Roboto, so it's stricter than the phone. The trip screen as a whole isn't covered, because its map is a platform view.
+`test/layout_test.dart` renders the home screen, every sync screen state, the erase flow and every erase logger state, the trip stats, the catch cards and the replay banner at the S21's size (360 × 800 dp). It does this at font scales 1.0, 1.1 (the S21's setting), 1.3, 1.5 and 2.0, and fails on any overflow. The test font is wider than Roboto, so it's stricter than the phone. The trip screen as a whole isn't covered, because its map is a platform view.
 
 ### Build settings that differ from Flutter's template
 
