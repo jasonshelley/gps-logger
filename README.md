@@ -137,12 +137,26 @@ From the top:
 - **HDOP arc**: a fuller arc means better accuracy. Green when HDOP is 5 or less.
 - Course in degrees and as a compass point, then speed in km/h. These show `--` when HDOP is over 5.
 - Local date and time (Sydney), with AEST or AEDT beside the time.
-- Today's catches: `Jase n` and `Matt n`.
-- Today's distance along the logged track.
+- **Trip meter** catches: `Jase n` and `Matt n` since the last reset.
+- **Trip meter** distance and time on the water, for example `Trip 12.4 km  3:25`. A `?` after it means the card couldn't be read to rebuild the meter.
 - Status line: `OK`, `No fix` or `SD error`, plus the points logged today.
 - The border is green while bytes are arriving from the GPS, and red when they've stopped.
 
-Catch counts, points and distance survive a restart. Once the GPS gives the date, they're rebuilt from today's file on the card, including any part of today already moved to `/uploaded`.
+The trip meter and today's point count survive a restart, because they're rebuilt from the log files on the card, including files already moved to `/uploaded`.
+
+### Trip meter
+
+The trip meter works like a car's: it counts from the last reset until you reset it again. **Only the phone app resets it.** The logger has no reset button. The app also keeps the all-time totals; the logger only shows the trip.
+
+| Shows | Counts since the reset |
+|---|---|
+| Jase / Matt | catches |
+| distance | metres along the logged track |
+| time (h:mm) | time on the water |
+
+Distance and time on the water both come from consecutive track points that are no more than 15 minutes apart. So time on the water means time spent in Logging mode with a good fix, including time at anchor, since stationary points are logged every minute. Time with the logger off, in Transfer mode or without a fix doesn't count, and neither does the straight line across that gap.
+
+The reset time is kept in `/trip.txt` on the card. At boot the logger rebuilds the meter from every log file since that date. The app can reset the meter while it's away from the logger: the reset is sent at the next connection and counts from the moment it was pressed. Details are in [docs/ble-protocol.md](docs/ble-protocol.md#trip-meter-v2).
 
 ### Transfer mode (switch closed)
 
@@ -188,6 +202,7 @@ To test a change locally before pushing, serve `web/` from the PC, for example w
 | `/gpsYYYYMMDD.csv` | Today's and earlier logs not yet transferred. Named by **Sydney local date** |
 | `/gpsnodate.csv` | Only if a catch was pressed before the GPS had ever given the date |
 | `/uploaded/` | Files the phone has confirmed |
+| `/trip.txt` | The trip meter's reset time (`reset_utc=<seconds>`), written when the app resets the meter. Kept by `rm *` |
 | `/readme.txt` | Optional. Printed to the console at boot, and kept by `rm *` |
 
 Each record goes in the file for its own local date, so a trip past midnight splits across two files. Times inside the file are UTC.
@@ -222,12 +237,12 @@ USB serial at 115200 baud. Type a command and press Enter. Lines over 96 charact
 | Command | What it does |
 |---|---|
 | `help` | Lists the commands |
-| `status` | GPS comms, lock, fix mode and quality, satellites, HDOP, position, clock (UTC and local), card state, buffered and dropped rows, today's numbers, uptime, free heap |
+| `status` | GPS comms, lock, fix mode and quality, satellites, HDOP, position, clock (UTC and local), card state, buffered and dropped rows, today's numbers, the trip meter, uptime, free heap |
 | `ls` / `ls /uploaded` | Lists files with sizes |
 | `cat <file>` | Prints a file |
 | `tail <file> [n]` | Prints the last n lines (default 10) |
 | `rm <file>` | Deletes a file |
-| `rm *` | Deletes every file in `/` except `readme.txt`, after you type `yes` |
+| `rm *` | Deletes every file in `/` except `readme.txt` and `trip.txt`, after you type `yes` |
 | `df` | Card size, used and free |
 
 File names without a leading `/` are in the root folder, for example `cat uploaded/gps20261111.csv`.
@@ -244,7 +259,9 @@ src/lvgl_port.*         LVGL display glue
 src/ui.*                logger and transfer screens
 src/gps.*               UART1 + TinyGPSPlusPlus, fix filter, lock/comms state
 src/clock.*             system clock from GPS, Sydney local time
-src/track_logger.*      log rule, catches, buffer and flush, daily CSV, stats rebuild
+src/track_logger.*      log rule, catches, buffer and flush, daily CSV, today's stats
+src/trip_meter.*        trip meter: reset time in /trip.txt, rebuild from logs, live counts
+src/log_reader.*        reads log CSV rows (for the rebuilds)
 src/storage.*           SD mount/retry, listing, move to /uploaded
 src/ble_transfer.*      NimBLE GATT transfer service
 src/crc32.*             CRC-32 shared with the phone page

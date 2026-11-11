@@ -216,6 +216,8 @@ Where the rewrite had to settle something the decisions left open, or found that
 | B15 | Build target | pioarduino `55.03.312-1` (Arduino core 3.3.12). The `esp32-c6-devkitm-1` board definition (4 MB flash) is used. Waveshare's schematic shows a C6FH4 (4 MB), but esptool says Jason's board is an ESP32-C6FH8 (8 MB, rev v0.2). The 4 MB layout runs on it and leaves the upper 4 MB unused. Moving to an 8 MB layout would change the partitions, so it's left for Jason to decide. The partition table is `huge_app.csv` (3 MB app, no OTA). The firmware is about 1.07 MB, which would only just fit a default 1.25 MB OTA slot, and nothing uses OTA. NimBLE-Arduino 2.5.2 provides BLE. |
 | B16 | Bluetooth security | No pairing. Anyone in range can list and download logs while the switch is on Transfer, and can confirm (move) a file if they send its correct CRC. That's acceptable for a fishing logger, and noted in the protocol doc. |
 
+| B17 | Trip meter (added after the rewrite) | Jason asked for a car-style trip meter that the app controls, so no new button. It counts catches per angler, distance and time on the water from a reset time the app sends over BLE (protocol v2, `METER_RESET`). It's stored in `/trip.txt` and rebuilt from the logs at boot. On the logger screen it replaces today's per-person catch counts and today's distance, which overrides that part of Q10. Today's points stay on the status line. "Time on the water" is time between consecutive track points at most 15 min apart (`SEGMENT_GAP_S`), so time logging with a good fix. Today's distance now uses the same gap rule. See `docs/ble-protocol.md` and the README. |
+
 ### To check on the hardware
 
 None of this has run on the board yet. On first power-up, check:
@@ -228,3 +230,4 @@ None of this has run on the board yet. On first power-up, check:
 6. The console works with a PC attached, and the logger runs normally from a power bank with nothing on USB.
 7. Chrome on Android finds "GPS Logger" by its service filter, the negotiated MTU gives 239-byte chunks, and the transfer speed is reasonable (expect 5–20 KB/s).
 8. A confirmed file moves to `/uploaded`, and a second transfer of the same day appends to it.
+9. Trip meter: a reset from the app writes `/trip.txt`, zeroes the screen's trip line (or recounts from the reset time), survives a restart, and a repeated reset with the same time changes nothing.
