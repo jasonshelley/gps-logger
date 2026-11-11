@@ -168,7 +168,9 @@ Moving files to `/uploaded` doesn't change the logger's meter, so the reading ta
 
 ### Map and replay
 
-- **Base map:** MapLibre ([maplibre_gl](https://pub.dev/packages/maplibre_gl)) with the OpenFreeMap `positron` style in light mode and `dark` in dark mode. The attribution button stays on the map, as OpenStreetMap requires.
+- **Base map:** MapLibre ([maplibre_gl](https://pub.dev/packages/maplibre_gl)) with the OpenFreeMap `liberty` style, in light and dark mode alike: blue water, light land and shaded relief, readable in sunlight. The `dark` style used in dark mode before had near-black water and land, and was hard to make out outdoors. It needs no API key. The attribution button stays on the map, as OpenStreetMap requires.
+- **Contrast:** the route has a dark outline (`#0f172a`, 85% opacity) under the speed colours, and each catch pin sits on a dark ring, so they stand out on blue water and light land without dimming the map. The trip screen uses dark status bar icons over the map in both themes.
+- **Satellite imagery:** there's none. EOX Sentinel-2 cloudless needs no key and allows personal, non-commercial use with attribution (CC BY-NC-SA 4.0). But it's 10 m imagery, and water at fishing zooms is near-black, so it wasn't added. Esri World Imagery is sharper, but Esri's terms for keyless use weren't confirmed, and a key can't go in this public repo.
 - **Route:** short GeoJSON line features coloured by speed, from indigo when drifting to yellow when flat out. Each feature carries its end time.
 - **Jitter:** the map and the replay draw `displayTrack()` from [move_meter.dart](../app/lib/core/move_meter.dart), not the raw points.
   - Points the movement rule ignores (HDOP over 5) are left out.

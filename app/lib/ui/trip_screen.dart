@@ -268,9 +268,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final cs = Theme.of(context).colorScheme;
     final top = MediaQuery.paddingOf(context).top;
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: Theme.of(context).brightness == Brightness.dark
-          ? SystemUiOverlayStyle.light
-          : SystemUiOverlayStyle.dark,
+      // Dark status bar icons: the map under them is light in both themes.
+      value: SystemUiOverlayStyle.dark,
       child: Scaffold(
         body: Stack(children: [
           Positioned.fill(

@@ -10,9 +10,15 @@ import '../core/trips.dart';
 import '../data/repository.dart';
 import 'theme.dart';
 
-/// OpenFreeMap: free vector tiles with no API key.
-const _lightStyle = 'https://tiles.openfreemap.org/styles/positron';
-const _darkStyle = 'https://tiles.openfreemap.org/styles/dark';
+/// OpenFreeMap's Liberty style: free vector tiles with no API key. Blue
+/// water, light land and shaded relief, readable in sunlight on a boat. It's
+/// used in dark mode too: the dark style's near-black water and land were
+/// hard to make out outdoors.
+const _mapStyle = 'https://tiles.openfreemap.org/styles/liberty';
+
+/// The dark outline under the route and around the pins, so the speed
+/// colours stand out on blue water and light land alike.
+const _outline = '#0f172a';
 
 /// The trip map: speed-shaded route, start and end, catch pins per angler,
 /// and the boat marker and reveal filters the replay drives.
@@ -168,9 +174,6 @@ class TripMapState extends State<TripMap> {
   Future<void> _onStyleLoaded() async {
     final m = _map;
     if (m == null) return;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final casing = dark ? '#0b0f14' : '#ffffff';
-
     await m.addGeoJsonSource('route', _routeGeoJson());
     await m.addGeoJsonSource('ends', _endsGeoJson());
     await m.addGeoJsonSource('catches', _catchesGeoJson());
@@ -188,7 +191,7 @@ class TripMapState extends State<TripMap> {
         'route',
         'route-ghost',
         LineLayerProperties(
-          lineColor: dark ? '#9aa4b2' : '#64748b',
+          lineColor: '#64748b',
           lineWidth: 3.0,
           lineOpacity: 0.0,
           lineJoin: 'round',
@@ -199,7 +202,7 @@ class TripMapState extends State<TripMap> {
         'route',
         'route-casing',
         LineLayerProperties(
-            lineColor: casing, lineWidth: 8.0, lineOpacity: 0.9, lineJoin: 'round', lineCap: 'round'),
+            lineColor: _outline, lineWidth: 7.5, lineOpacity: 0.85, lineJoin: 'round', lineCap: 'round'),
         filter: _always,
         enableInteraction: false);
     await m.addLineLayer(
@@ -214,14 +217,14 @@ class TripMapState extends State<TripMap> {
         CircleLayerProperties(
           circleRadius: 6.0,
           circleColor: ['match', ['get', 'kind'], 'start', '#16a34a', '#dc2626'],
-          circleStrokeColor: casing,
+          circleStrokeColor: '#ffffff',
           circleStrokeWidth: 2.5,
         ),
         enableInteraction: false);
     await m.addCircleLayer(
         'catches',
         'catch-halo',
-        CircleLayerProperties(circleRadius: 16.0, circleColor: ['get', 'color'], circleOpacity: 0.22),
+        const CircleLayerProperties(circleRadius: 12.0, circleColor: _outline, circleOpacity: 0.8),
         filter: _always,
         enableInteraction: false);
     await m.addCircleLayer(
@@ -313,11 +316,9 @@ class TripMapState extends State<TripMap> {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     final b = widget.data.trip.stats.bounds;
     return MapLibreMap(
-      key: ValueKey(dark),
-      styleString: dark ? _darkStyle : _lightStyle,
+      styleString: _mapStyle,
       initialCameraPosition: CameraPosition(
         target: b == null ? const LatLng(-33.85, 151.25) : LatLng(b.centerLat, b.centerLon),
         zoom: 12,
