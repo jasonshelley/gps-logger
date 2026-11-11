@@ -1,0 +1,3 @@
+type,time_utc,lat,lon,alt_m,speed_kmh,course_deg,hdop,sats_tracked,sats_visible,fix_quality,fix_mode,fix_age_s,comment
+catch,,,,,,,,,,,,,Jase catch
+catch,,,,,,,,,,,,,Matt catch

@@ -1,0 +1,406 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+import '../core/geo.dart';
+import '../core/log_csv.dart';
+import '../core/trips.dart';
+
+class Trip {
+  const Trip(this.id, this.stats);
+  final int id;
+  final TripStats stats;
+}
+
+class TripData {
+  const TripData(this.trip, this.points, this.catches);
+  final Trip trip;
+  final List<TrackPoint> points;
+  final List<StoredCatch> catches;
+}
+
+/// A catch as stored, with its database id (used to key photos and conditions).
+class StoredCatch {
+  const StoredCatch(this.id, this.event);
+  final int id;
+  final CatchEvent event;
+  String get angler => event.angler;
+  DateTime? get time => event.time;
+}
+
+class ImportResult {
+  const ImportResult({
+    required this.alreadyHad,
+    required this.newPoints,
+    required this.newCatches,
+    required this.undatedCatches,
+    required this.badLines,
+    required this.tripIds,
+  });
+
+  /// The exact same file (name and CRC) was imported before.
+  final bool alreadyHad;
+  final int newPoints;
+  final int newCatches;
+  final int undatedCatches;
+  final int badLines;
+
+  /// Trips that now contain this file's records.
+  final Set<int> tripIds;
+}
+
+/// Everything the app stores. Local only: SQLite plus the raw CSV files.
+class Repository {
+  Repository(this.db, {required this.logDir});
+
+  final Database db;
+
+  /// Where raw CSV files are kept, exactly as received.
+  final Directory logDir;
+
+  final _changes = <void Function()>[];
+  void addListener(void Function() f) => _changes.add(f);
+  void removeListener(void Function() f) => _changes.remove(f);
+  void _notify() {
+    for (final f in List.of(_changes)) {
+      f();
+    }
+  }
+
+  Future<bool> hasFile(String name, int crc) async =>
+      (await db.query('files', where: 'name = ? AND crc = ?', whereArgs: [name, crc], limit: 1))
+          .isNotEmpty;
+
+  /// Stores a file received from the logger and rebuilds the affected trips.
+  /// Importing the same file twice is harmless.
+  ///
+  /// [shift] moves every timestamp; the built-in sample trips use it so they
+  /// can never collide with real logs.
+  Future<ImportResult> importLog(String name, Uint8List bytes, int crc, {Duration shift = Duration.zero}) async {
+    if (await hasFile(name, crc)) {
+      return const ImportResult(
+          alreadyHad: true, newPoints: 0, newCatches: 0, undatedCatches: 0, badLines: 0, tripIds: {});
+    }
+    // Parse first: a file we can't read is never stored or confirmed.
+    var parsed = parseLogCsv(latin1.decode(bytes));
+    if (shift != Duration.zero) parsed = _shifted(parsed, shift);
+
+    await logDir.create(recursive: true);
+    final base = p.basenameWithoutExtension(name);
+    final file = File(p.join(logDir.path, '$base-${crc.toRadixString(16).padLeft(8, '0')}.csv'));
+    await file.writeAsBytes(bytes, flush: true);
+
+    var newPoints = 0, newCatches = 0;
+    await db.transaction((txn) async {
+      final fileId = await txn.insert('files', {
+        'name': name,
+        'crc': crc,
+        'size': bytes.length,
+        'received_at': DateTime.now().millisecondsSinceEpoch,
+        'path': file.path,
+        'points': parsed.points.length,
+        'catches': parsed.catches.length,
+      });
+      final before = Sqflite.firstIntValue(await txn.rawQuery('SELECT COUNT(*) FROM points')) ?? 0;
+      final beforeC = Sqflite.firstIntValue(await txn.rawQuery('SELECT COUNT(*) FROM catches')) ?? 0;
+      final batch = txn.batch();
+      for (final pt in parsed.points) {
+        batch.insert(
+            'points',
+            {
+              't': pt.t,
+              'lat': pt.lat,
+              'lon': pt.lon,
+              'alt': pt.altM,
+              'speed': pt.speedKmh,
+              'course': pt.courseDeg,
+              'hdop': pt.hdop,
+              'sats': pt.sats,
+              'file_id': fileId,
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      for (final c in parsed.catches) {
+        batch.insert(
+            'catches',
+            {
+              't': c.t,
+              'angler': c.angler,
+              'lat': c.lat,
+              'lon': c.lon,
+              'alt': c.altM,
+              'fix_age': c.fixAgeS,
+              'file_id': fileId,
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      await batch.commit(noResult: true);
+      newPoints = (Sqflite.firstIntValue(await txn.rawQuery('SELECT COUNT(*) FROM points')) ?? 0) - before;
+      newCatches = (Sqflite.firstIntValue(await txn.rawQuery('SELECT COUNT(*) FROM catches')) ?? 0) - beforeC;
+    });
+
+    final times = [
+      ...parsed.points.map((e) => e.t),
+      ...parsed.catches.map((e) => e.t).whereType<int>(),
+    ];
+    final tripIds = await rebuildTrips();
+    final touched = <int>{};
+    if (times.isNotEmpty) {
+      final trips = await this.trips();
+      for (final t in times) {
+        for (final trip in trips) {
+          if (t >= trip.stats.startMs && t <= trip.stats.endMs) {
+            touched.add(trip.id);
+            break;
+          }
+        }
+      }
+    }
+    assert(tripIds.containsAll(touched));
+    _notify();
+    return ImportResult(
+      alreadyHad: false,
+      newPoints: newPoints,
+      newCatches: newCatches,
+      undatedCatches: parsed.undatedCatches,
+      badLines: parsed.badLines,
+      tripIds: touched,
+    );
+  }
+
+  static ParsedLog _shifted(ParsedLog l, Duration d) => ParsedLog(
+        points: [
+          for (final p in l.points)
+            TrackPoint(
+                time: p.time.add(d),
+                lat: p.lat,
+                lon: p.lon,
+                altM: p.altM,
+                speedKmh: p.speedKmh,
+                courseDeg: p.courseDeg,
+                hdop: p.hdop,
+                sats: p.sats)
+        ],
+        catches: [
+          for (final c in l.catches)
+            CatchEvent(
+                angler: c.angler,
+                time: c.time?.add(d),
+                lat: c.lat,
+                lon: c.lon,
+                altM: c.altM,
+                fixAgeS: c.fixAgeS)
+        ],
+        badLines: l.badLines,
+      );
+
+  static const samplePrefix = 'sample-';
+
+  Future<bool> hasSamples() async => (await db.query('files',
+          where: 'name LIKE ?', whereArgs: ['$samplePrefix%'], limit: 1))
+      .isNotEmpty;
+
+  /// Deletes the sample trips and nothing else.
+  Future<void> removeSamples() async {
+    final files = await db.query('files', where: 'name LIKE ?', whereArgs: ['$samplePrefix%']);
+    await db.transaction((txn) async {
+      for (final f in files) {
+        await txn.delete('points', where: 'file_id = ?', whereArgs: [f['id']]);
+        await txn.delete('catches', where: 'file_id = ?', whereArgs: [f['id']]);
+        await txn.delete('files', where: 'id = ?', whereArgs: [f['id']]);
+      }
+    });
+    for (final f in files) {
+      final path = f['path'] as String?;
+      if (path != null) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
+    }
+    await rebuildTrips();
+    _notify();
+  }
+
+  final _previewCache = <String, List<(double, double)>>{};
+
+  /// Up to [maxPoints] evenly spaced route points, for the list thumbnails.
+  Future<List<(double, double)>> routePreview(Trip t, {int maxPoints = 90}) async {
+    final key = '${t.id}-${t.stats.endMs}-${t.stats.pointCount}';
+    final hit = _previewCache[key];
+    if (hit != null) return hit;
+    final rows = await db.query('points',
+        columns: ['lat', 'lon'], where: 't BETWEEN ? AND ?', whereArgs: [t.stats.startMs, t.stats.endMs], orderBy: 't');
+    final step = (rows.length / maxPoints).ceil().clamp(1, 1 << 30);
+    final out = <(double, double)>[
+      for (var i = 0; i < rows.length; i += step) (rows[i]['lat'] as double, rows[i]['lon'] as double),
+      if (rows.isNotEmpty && (rows.length - 1) % step != 0)
+        (rows.last['lat'] as double, rows.last['lon'] as double),
+    ];
+    _previewCache[key] = out;
+    return out;
+  }
+
+  Future<void> markConfirmed(String name, int crc) async {
+    await db.update('files', {'confirmed_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'name = ? AND crc = ?', whereArgs: [name, crc]);
+  }
+
+  /// Recomputes the trips table from all points and catches. Trips whose time
+  /// span is unchanged are kept as they are. Returns the ids of all trips.
+  Future<Set<int>> rebuildTrips() async {
+    final rows = await db.rawQuery(
+        'SELECT t FROM points UNION ALL SELECT t FROM catches WHERE t IS NOT NULL ORDER BY t');
+    final windows = splitIntoTrips([for (final r in rows) r['t'] as int]);
+    final existing = {
+      for (final r in await db.query('trips', columns: ['id', 'end_t'])) r['id'] as int: r['end_t'] as int
+    };
+    final keep = <int>{};
+    final batch = db.batch();
+    for (final w in windows) {
+      keep.add(w.startMs);
+      if (existing[w.startMs] == w.endMs) {
+        // Same span. Re-check the counts cheaply in case a catch was added inside.
+        final n = Sqflite.firstIntValue(await db.rawQuery(
+                'SELECT COUNT(*) FROM points WHERE t BETWEEN ? AND ?', [w.startMs, w.endMs])) ??
+            0;
+        final stored = Sqflite.firstIntValue(
+                await db.rawQuery('SELECT points FROM trips WHERE id = ?', [w.startMs])) ??
+            -1;
+        final storedCatches = (await db.rawQuery('SELECT catches FROM trips WHERE id = ?', [w.startMs]))
+            .first['catches'] as String;
+        final c = Sqflite.firstIntValue(await db.rawQuery(
+                'SELECT COUNT(*) FROM catches WHERE t BETWEEN ? AND ?', [w.startMs, w.endMs])) ??
+            0;
+        final storedC = (jsonDecode(storedCatches) as Map).values.fold<int>(0, (a, b) => a + (b as int));
+        if (n == stored && c == storedC) continue;
+      }
+      final pts = await _pointsBetween(w.startMs, w.endMs);
+      final cs = await _catchesBetween(w.startMs, w.endMs);
+      final s = computeTripStats(pts, [for (final c in cs) c.event]);
+      batch.insert('trips', _tripRow(w.startMs, s), conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    for (final id in existing.keys) {
+      if (!keep.contains(id)) batch.delete('trips', where: 'id = ?', whereArgs: [id]);
+    }
+    await batch.commit(noResult: true);
+    return keep;
+  }
+
+  Map<String, Object?> _tripRow(int id, TripStats s) => {
+        'id': id,
+        'end_t': s.endMs,
+        'distance_m': s.distanceM,
+        'moving_s': s.movingS,
+        'max_speed': s.maxSpeedKmh,
+        'points': s.pointCount,
+        'catches': jsonEncode(s.catchesByAngler),
+        'min_lat': s.bounds?.minLat,
+        'min_lon': s.bounds?.minLon,
+        'max_lat': s.bounds?.maxLat,
+        'max_lon': s.bounds?.maxLon,
+      };
+
+  Trip _tripFromRow(Map<String, Object?> r) {
+    final b = r['min_lat'] == null
+        ? null
+        : GeoBounds(r['min_lat'] as double, r['min_lon'] as double, r['max_lat'] as double,
+            r['max_lon'] as double);
+    return Trip(
+      r['id'] as int,
+      TripStats(
+        startMs: r['id'] as int,
+        endMs: r['end_t'] as int,
+        distanceM: (r['distance_m'] as num).toDouble(),
+        movingS: r['moving_s'] as int,
+        maxSpeedKmh: (r['max_speed'] as num?)?.toDouble(),
+        pointCount: r['points'] as int,
+        catchesByAngler: (jsonDecode(r['catches'] as String) as Map).cast<String, int>(),
+        bounds: b,
+      ),
+    );
+  }
+
+  /// All trips, newest first.
+  Future<List<Trip>> trips() async =>
+      [for (final r in await db.query('trips', orderBy: 'id DESC')) _tripFromRow(r)];
+
+  Future<Trip?> trip(int id) async {
+    final r = await db.query('trips', where: 'id = ?', whereArgs: [id]);
+    return r.isEmpty ? null : _tripFromRow(r.first);
+  }
+
+  Future<TripData?> tripData(int id) async {
+    final t = await trip(id);
+    if (t == null) return null;
+    return TripData(t, await _pointsBetween(t.stats.startMs, t.stats.endMs),
+        await _catchesBetween(t.stats.startMs, t.stats.endMs));
+  }
+
+  /// Catches the logger made before it knew the date. They can't be placed in a trip.
+  Future<List<StoredCatch>> undatedCatches() async =>
+      [for (final r in await db.query('catches', where: 't IS NULL', orderBy: 'id')) _catchFromRow(r)];
+
+  Future<int> fileCount() async =>
+      Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM files')) ?? 0;
+
+  Future<DateTime?> lastSync() async {
+    final v = Sqflite.firstIntValue(await db.rawQuery('SELECT MAX(received_at) FROM files'));
+    return v == null ? null : DateTime.fromMillisecondsSinceEpoch(v);
+  }
+
+  Future<List<TrackPoint>> _pointsBetween(int a, int b) async => [
+        for (final r in await db.query('points', where: 't BETWEEN ? AND ?', whereArgs: [a, b], orderBy: 't'))
+          TrackPoint(
+            time: DateTime.fromMillisecondsSinceEpoch(r['t'] as int, isUtc: true),
+            lat: r['lat'] as double,
+            lon: r['lon'] as double,
+            altM: (r['alt'] as num?)?.toDouble(),
+            speedKmh: (r['speed'] as num?)?.toDouble(),
+            courseDeg: (r['course'] as num?)?.toDouble(),
+            hdop: (r['hdop'] as num?)?.toDouble(),
+            sats: r['sats'] as int?,
+          )
+      ];
+
+  Future<List<StoredCatch>> _catchesBetween(int a, int b) async => [
+        for (final r in await db.query('catches', where: 't BETWEEN ? AND ?', whereArgs: [a, b], orderBy: 't'))
+          _catchFromRow(r)
+      ];
+
+  StoredCatch _catchFromRow(Map<String, Object?> r) => StoredCatch(
+        r['id'] as int,
+        CatchEvent(
+          angler: r['angler'] as String,
+          time: r['t'] == null ? null : DateTime.fromMillisecondsSinceEpoch(r['t'] as int, isUtc: true),
+          lat: (r['lat'] as num?)?.toDouble(),
+          lon: (r['lon'] as num?)?.toDouble(),
+          altM: (r['alt'] as num?)?.toDouble(),
+          fixAgeS: r['fix_age'] as int?,
+        ),
+      );
+
+  // ---- Conditions cache ----
+
+  Future<Map<String, Object?>?> cachedConditions(int tripId) async {
+    final r = await db.query('trip_conditions', where: 'trip_id = ?', whereArgs: [tripId]);
+    return r.isEmpty ? null : r.first;
+  }
+
+  Future<void> saveConditions(int tripId, double lat, double lon, String? weather, String? marine) async {
+    await db.insert(
+        'trip_conditions',
+        {
+          'trip_id': tripId,
+          'fetched_at': DateTime.now().millisecondsSinceEpoch,
+          'lat': lat,
+          'lon': lon,
+          'weather': weather,
+          'marine': marine,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+}
