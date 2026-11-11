@@ -162,6 +162,9 @@ On 2026-11-11, on a Galaxy S21 (SM-G991B, Android 15), with the logger on COM3 i
 - The file was stored, and CONFIRM was accepted, so the logger moved the file to `/uploaded`.
 - The file's 7 real track points became a trip, "Wed 11 Nov, 2:01 pm, 3 min, 134 m", on the home screen.
 - The first attempt was closed after the import but before CONFIRM. The second sync recognised the file as already stored and only confirmed it, which is the designed recovery.
+- That first attempt exposed two races in cancelling a sync, both now fixed (commit `b0bf3c0`). A cancel during the Bluetooth connect was missed. A cancel while a file was being saved could disconnect before CONFIRM. Now a file that has started saving always gets its CONFIRM before the run stops. This fix hasn't been run on the phone yet.
+- The app restarting during testing was `flutter run` installing a new build (Android logs it as a force stop), not a crash. No Dart exception or native crash was logged.
+- The trip screen's stats grid overflowed by 6 px on the S21. It now uses a row height that scales with the text size (not yet seen on the phone).
 
 ## What's next
 
