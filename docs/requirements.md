@@ -1,6 +1,6 @@
 # ESP32 GPS Logger: requirements derived from the code
 
-Status: draft 2, 2026-11-11. Derived from the code, then refined with Jason. Where they disagree, the Decisions section overrides the requirements derived from the code.
+Status: draft 3, 2026-11-11. Derived from the code, then refined with Jason, then updated after the rewrite (see **Build notes** at the end). Where they disagree, the Decisions section overrides the requirements derived from the code, and the Build notes override both.
 
 ## What the device is
 
@@ -173,10 +173,10 @@ These aren't requirements. Each one needs a decision before the rewrite.
 | 11 | Serial console | Keep `status`, `ls`, `cat`, `rm <file>` and `rm *`, with input limited to the buffer size (fixes D9). Add `help`, `df` (card space), `tail <file> [n]` and `ls /uploaded`. `rm *` asks for confirmation and still keeps `readme.txt`. |
 | 12 | Build setup | A PlatformIO project on LVGL 8, keeping the working ST7789 driver, with pinned library versions and its own `lv_conf.h`. Note: the official PlatformIO ESP32 platform doesn't support the ESP32-C6 with Arduino core 3.x, so this will probably need the community `pioarduino` platform. The project lives in `C:\src\mine\gps-logger` as a local git repo with no remote. |
 
-### Still to settle
+### Settled during the build (were "Still to settle")
 
-- Where the phone transfer page is hosted. Web Bluetooth needs HTTPS, so GitHub Pages or similar.
-- Check the proposed button and switch pins (Q9) against the Waveshare pinout.
+- **Phone page hosting:** GitHub Pages. `web/index.html` is a single static file. Push it to a GitHub repository and turn on Pages, as the README describes. That gives HTTPS, which Web Bluetooth needs. Nothing has been published yet; that's Jason's call. For testing from a PC, `http://localhost` also counts as secure.
+- **Pins (Q9):** confirmed against Waveshare's schematic (`ESP32-C6-LCD-1.47_schemetics.pdf`). Jase GPIO 1, Matt GPIO 2 and the mode switch GPIO 3 are all on header U2 (pins 14, 15 and 16), with nothing else connected. None of them is a strapping pin (the ESP32-C6's are 4, 5, 8, 9 and 15). GPIO 0/1 would take a 32 kHz crystal, but the board doesn't fit one. GPS stays on RX 19 / TX 18 (U2 pins 3 and 2). The pins are in `include/config.h` and in the README's wiring table. This resolves D1.
 
 ## Open questions for refinement
 
@@ -192,3 +192,39 @@ These aren't requirements. Each one needs a decision before the rewrite.
 10. ~~**Screen:**~~ Decided, see Decisions. Keep copy 2's layout (tracked arc plus HDOP arc), or show visible satellites as copy 1 did? Is anything missing, such as lat/lon, distance travelled or the current file name?
 11. ~~**Serial console:**~~ Decided, see Decisions. Keep it? Are any more commands wanted, such as `df`, `tail`, or a way to set Wi-Fi details?
 12. ~~**Rewrite scope:**~~ Decided, see Decisions. Stay on Arduino IDE and LVGL 8, or move to PlatformIO and/or LVGL 9? Where should the new project live, and should it be a git repo?
+
+## Build notes
+
+Where the rewrite had to settle something the decisions left open, or found that the code or tools didn't match an assumption. These override the requirements above.
+
+| # | Topic | What was built |
+|---|---|---|
+| B1 | Pins | As Q9: Jase GPIO 1, Matt GPIO 2, mode switch GPIO 3 (LOW = Transfer). The hardware table above still shows the old sketch's clashing pins, kept for the record. |
+| B2 | Boot mode | The switch is read at boot (majority of 5 reads over about 10 ms), so the device starts in the mode the switch is in. Fixes D13. After boot, a change still needs 250 ms of stable input. |
+| B3 | "Stationary" (Q6) | Stationary means GPS speed under 2 km/h and less than 10 m from the last logged point. Moving: log when 5 s have passed or 10 m has been covered. Stationary: log every 60 s. The first good fix after boot is always logged. |
+| B4 | "Has lock" | A fix that passed the filter (valid, HDOP ≤ 5, under 2 s old) in the last 5 s, and current HDOP ≤ 5. It no longer depends on a point being logged, since the log rule now skips most fixes. |
+| B5 | CSV columns (Q4, Q7) | `type,time_utc,lat,lon,alt_m,speed_kmh,course_deg,hdop,sats_tracked,sats_visible,fix_quality,fix_mode,fix_age_s,comment`. `type` (`track`/`catch`) was added so the phone and the boot rebuild don't have to parse the comment. The two old age fields are gone as Q4 decided. `fix_age_s` is new: it's the fix age Q7 asks for, filled only on catch rows. A catch row's time is the time of the press. |
+| B6 | Catch before the GPS knows the date | The file name needs the local date. A catch pressed before the clock has ever been set goes to `/gpsnodate.csv` (empty time, and empty position unless a fix exists). It counts towards the first day the clock then shows. The transfer lists it like any log file. |
+| B7 | Rebuilding today's numbers (Q2, Q10) | This can't happen literally at boot, because the date comes from the GPS. It happens as soon as the clock is first set from the GPS, and again at local midnight. It reads `/uploaded/gpsYYYYMMDD.csv` (if part of today was already transferred) and then `/gpsYYYYMMDD.csv`. The last track point also seeds the "last good fix", so a catch before the first fix after a restart still gets a position, with its age. |
+| B8 | Same-day transfer twice | When a confirmed file's name already exists in `/uploaded`, its rows (minus the header) are appended to that file and the original is deleted. Chrome saves the second download as `gpsYYYYMMDD (1).gpx`. See `docs/ble-protocol.md`. |
+| B9 | Transfer mode | The GPS is still parsed so the clock stays right, but nothing is logged (FR-5). Catch buttons are ignored. NimBLE starts the first time Transfer mode is entered and then stays loaded, but it only advertises in Transfer mode. Leaving Transfer stops advertising and disconnects the phone. |
+| B10 | Both buttons together | Each press writes its own catch record. Copy 2's "Matt wins" rule only existed because of the single shared comment. |
+| B11 | Card failures | A failed write keeps the rows in RAM (up to 32, oldest dropped after that, counted in `status`). The card is remounted every 5 s until it's back. The status line shows `SD error`, and the catch banner shows `NOT SAVED` if that catch didn't reach the card. |
+| B12 | Time | The system clock is set from GPS UTC (`settimeofday`), and local time uses the POSIX TZ rule `AEST-10AEDT,M10.1.0,M4.1.0/3`. The screen reads the system clock, so the date and time don't flicker (fixes D10). FAT timestamps on the card also come from the system clock, in local time (FR-14). |
+| B13 | Startup (FR-29) | Order: USB serial (never waits), LCD, LVGL, inputs, clock, SD, screens, GPS UART. `/readme.txt` is still printed if present (FR-15). |
+| B14 | LVGL config | The `lv_conf.h` the old sketch used (`Documents\Arduino\libraries\lv_conf.h`) is actually an **LVGL 9** template, compiled against LVGL 8.3.10, so most of it was ignored. The project has its own LVGL 8.3 `lv_conf.h`. `LV_COLOR_16_SWAP` stays 0, because the ST7789 init sets RAMCTRL (0xB0) to little-endian. The display now redraws only dirty areas, where copy 2 redrew the whole screen on every change. |
+| B15 | Build target | pioarduino `55.03.312-1` (Arduino core 3.3.12). The `esp32-c6-devkitm-1` board definition is used because it matches the C6FH4's 4 MB flash. The partition table is `huge_app.csv` (3 MB app, no OTA), because LVGL plus NimBLE doesn't fit a 1.25 MB OTA slot. NimBLE-Arduino 2.5.2 provides BLE. |
+| B16 | Bluetooth security | No pairing. Anyone in range can list and download logs while the switch is on Transfer, and can confirm (move) a file if they send its correct CRC. That's acceptable for a fishing logger, and noted in the protocol doc. |
+
+### To check on the hardware
+
+None of this has run on the board yet. On first power-up, check:
+
+1. The screen draws correctly with partial refresh: no offset, tearing or wrong colours. If it's wrong, set `full_refresh = 1` in `src/lvgl_port.cpp`, as copy 2 had it.
+2. The SD card mounts at 20 MHz alongside the LCD on the shared bus. If not, lower `SD_SPI_HZ` in `config.h`.
+3. Buttons on GPIO 1/2 and the switch on GPIO 3 read correctly, and the device boots straight into the switch's mode.
+4. The GPS on RX 19 / TX 18 gives time, fix, HDOP and satellite counts. The clock shows AEDT now (DST is on in November).
+5. Track points follow the 5 s / 10 m / 60 s rule. Catches write straight away, and counts and distance come back after a restart once the GPS has the time.
+6. The console works with a PC attached, and the logger runs normally from a power bank with nothing on USB.
+7. Chrome on Android finds "GPS Logger" by its service filter, the negotiated MTU gives 239-byte chunks, and the transfer speed is reasonable (expect 5–20 KB/s).
+8. A confirmed file moves to `/uploaded`, and a second transfer of the same day appends to it.
