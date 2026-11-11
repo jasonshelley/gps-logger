@@ -88,6 +88,16 @@ void main() {
       expect(all.catchesByAngler, {'Jase': 1, 'Matt': 1});
     });
 
+    test('the trip list thumbnails draw the route without the jitter', () async {
+      final trips = await repo.trips();
+      final desk = trips.firstWhere((t) => t.stats.start.day == 11);
+      final moving = trips.firstWhere((t) => t.stats.start.day == 8);
+      expect(await repo.routePreview(desk), hasLength(1)); // a dot
+      final route = await repo.routePreview(moving);
+      expect(route.length, greaterThan(20));
+      expect(route.length, lessThanOrEqualTo(91));
+    });
+
     test('a reset part way through a trip counts from the reset, as tools/metrics.py does', () async {
       // meter_for(['test-data/moving-noisy.csv'], reset) in tools/metrics.py.
       for (final (reset, metres, seconds, matt) in [

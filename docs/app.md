@@ -175,6 +175,7 @@ Moving files to `/uploaded` doesn't change the logger's meter, so the reading ta
   - Points that never became a confirmed move are pinned to where the boat sat, with a speed of 0.
   - So a stop is drawn as a dot in the slowest colour, not a scribble, and the boat marker sits still.
   - Points that turn out to be part of a move keep their own positions, so the line still follows the boat. On `moving-noisy.csv` the drawn line is 6885 m (true 6831 m), where the raw points make 8178 m.
+  - The trip list thumbnails draw the same track. A trip that never moved is a dot.
   - The GPX export keeps every point as logged.
 - **Catch pins:** circles in each angler's colour: Jase orange, Matt fuchsia. Tapping a pin scrolls the sheet to that catch.
 - **Replay:** a layer filter (`t <= now`) reveals the route and the pins as time passes, over a faded copy of the whole route. A boat marker moves along the route, interpolated between points. Each frame changes only filters and one point, so no route geometry is re-sent. Playback speed defaults to about 40 s for the whole trip and can be changed from 30× to 1200×. A banner and a haptic tap mark each catch.

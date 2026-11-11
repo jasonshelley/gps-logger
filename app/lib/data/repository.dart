@@ -234,18 +234,23 @@ class Repository {
 
   final _previewCache = <String, List<(double, double)>>{};
 
-  /// Up to [maxPoints] evenly spaced route points, for the list thumbnails.
+  /// Up to [maxPoints] evenly spaced route points, for the list thumbnails:
+  /// the route as the map draws it, so jitter isn't scaled up into a line.
+  /// A trip that never moved gives a single point.
   Future<List<(double, double)>> routePreview(Trip t, {int maxPoints = 90}) async {
     final key = '${t.id}-${t.stats.endMs}-${t.stats.pointCount}';
     final hit = _previewCache[key];
     if (hit != null) return hit;
-    final rows = await db.query('points',
-        columns: ['lat', 'lon'], where: 't BETWEEN ? AND ?', whereArgs: [t.stats.startMs, t.stats.endMs], orderBy: 't');
-    final step = (rows.length / maxPoints).ceil().clamp(1, 1 << 30);
+    final track = displayTrack(await _pointsBetween(t.stats.startMs, t.stats.endMs));
+    final pts = <(double, double)>[];
+    for (final p in track) {
+      if (pts.isEmpty || pts.last != (p.lat, p.lon)) pts.add((p.lat, p.lon));
+    }
+    if (t.stats.distanceM == 0 && pts.length > 1) pts.removeRange(1, pts.length);
+    final step = (pts.length / maxPoints).ceil().clamp(1, 1 << 30);
     final out = <(double, double)>[
-      for (var i = 0; i < rows.length; i += step) (rows[i]['lat'] as double, rows[i]['lon'] as double),
-      if (rows.isNotEmpty && (rows.length - 1) % step != 0)
-        (rows.last['lat'] as double, rows.last['lon'] as double),
+      for (var i = 0; i < pts.length; i += step) pts[i],
+      if (pts.isNotEmpty && (pts.length - 1) % step != 0) pts.last,
     ];
     _previewCache[key] = out;
     return out;

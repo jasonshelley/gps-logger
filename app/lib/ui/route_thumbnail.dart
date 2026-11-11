@@ -46,7 +46,7 @@ class _RouteThumbnailState extends State<RouteThumbnail> {
         future: _pts,
         builder: (context, snap) {
           final pts = snap.data;
-          if (pts == null || pts.length < 2) {
+          if (pts == null || pts.isEmpty) {
             return Icon(Icons.route_rounded, color: cs.onSurfaceVariant.withValues(alpha: 0.5));
           }
           return CustomPaint(painter: _RoutePainter(pts, cs.primary));
@@ -63,6 +63,11 @@ class _RoutePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (pts.length == 1) {
+      // The boat never moved: a dot where it sat.
+      canvas.drawCircle(size.center(Offset.zero), 4.5, Paint()..color = color);
+      return;
+    }
     var minLat = double.infinity, maxLat = -double.infinity;
     var minLon = double.infinity, maxLon = -double.infinity;
     for (final (lat, lon) in pts) {
