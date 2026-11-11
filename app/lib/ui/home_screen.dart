@@ -232,10 +232,10 @@ class _SeasonCard extends StatelessWidget {
           ),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          // A Wrap, so "fish logged" drops below the number with large text.
+          Wrap(spacing: 10, crossAxisAlignment: WrapCrossAlignment.end, children: [
             Text('$total',
                 style: t.displayMedium?.copyWith(fontWeight: FontWeight.w800, color: cs.onPrimaryContainer, height: 1)),
-            const SizedBox(width: 10),
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Text(total == 1 ? 'fish' : 'fish logged',

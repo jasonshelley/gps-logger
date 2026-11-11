@@ -64,6 +64,8 @@ flutter analyze
 
 The tests use the sample CSVs in `app/test/fixtures`. To regenerate those, run `python tool/make_fixtures.py` from `app/`.
 
+`test/layout_test.dart` renders the home screen, every sync screen state, the trip stats, the catch cards and the replay banner at the S21's size (360 × 800 dp). It does this at font scales 1.0, 1.1 (the S21's setting), 1.3, 1.5 and 2.0, and fails on any overflow. The test font is wider than Roboto, so it's stricter than the phone. The trip screen as a whole isn't covered, because its map is a platform view.
+
 ### Build settings that differ from Flutter's template
 
 - **AGP 9.5.1 and Gradle 9.8.2** instead of the template's AGP 9.1.0. API 37 ships as `platforms/android-37.0`, and AGP 9.1 can't find it.
@@ -164,7 +166,7 @@ On 2026-11-11, on a Galaxy S21 (SM-G991B, Android 15), with the logger on COM3 i
 - The first attempt was closed after the import but before CONFIRM. The second sync recognised the file as already stored and only confirmed it, which is the designed recovery.
 - That first attempt exposed two races in cancelling a sync, both now fixed (commit `b0bf3c0`). A cancel during the Bluetooth connect was missed. A cancel while a file was being saved could disconnect before CONFIRM. Now a file that has started saving always gets its CONFIRM before the run stops. This fix hasn't been run on the phone yet.
 - The app restarting during testing was `flutter run` installing a new build (Android logs it as a force stop), not a crash. No Dart exception or native crash was logged.
-- The trip screen's stats grid overflowed by 6 px on the S21. It now uses a row height that scales with the text size (not yet seen on the phone).
+- The trip screen's stats tiles overflowed by 5.9 px on the S21 (font scale 1.1). They now sit two to a row and size to their content. The layout test also found, and I fixed, overflows at larger fonts in the condition chips, the season card on home, the download ring, the trip title row and the replay banner. None of these fixes has been seen on the phone yet.
 
 ## What's next
 

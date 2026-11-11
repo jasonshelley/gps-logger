@@ -52,20 +52,46 @@ class StatTile extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(color: cs.surfaceContainer, borderRadius: BorderRadius.circular(16)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (icon != null) ...[Icon(icon, size: 16, color: cs.primary), const SizedBox(width: 6)],
-          Flexible(
+          Expanded(
             child: Text(label,
-                style: t.labelMedium?.copyWith(color: cs.onSurfaceVariant), overflow: TextOverflow.ellipsis),
+                style: t.labelMedium?.copyWith(color: cs.onSurfaceVariant),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis),
           ),
         ]),
         const SizedBox(height: 4),
         Text(value,
             style: t.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis),
       ]),
     );
+  }
+}
+
+/// Stat tiles two to a row. Each row is as tall as its tallest tile, so the
+/// tiles fit any text size without a fixed height.
+class StatGrid extends StatelessWidget {
+  const StatGrid({super.key, required this.children, this.spacing = 10});
+  final List<Widget> children;
+  final double spacing;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i += 2) {
+      if (rows.isNotEmpty) rows.add(SizedBox(height: spacing));
+      rows.add(IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(child: children[i]),
+          SizedBox(width: spacing),
+          Expanded(child: i + 1 < children.length ? children[i + 1] : const SizedBox.shrink()),
+        ]),
+      ));
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: rows);
   }
 }
 

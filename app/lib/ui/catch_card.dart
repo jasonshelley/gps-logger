@@ -196,7 +196,7 @@ class _Chip extends StatelessWidget {
       decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(10)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         if (icon != null) ...[Icon(icon, size: 15, color: cs.primary), const SizedBox(width: 5)],
-        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        Flexible(child: Text(label, style: Theme.of(context).textTheme.labelMedium)),
       ]),
     );
   }

@@ -389,13 +389,18 @@ class _Transferring extends StatelessWidget {
             duration: const Duration(milliseconds: 250),
             builder: (_, v, _) => CustomPaint(
               painter: _RingPainter(v, cs.primary, cs.surfaceContainerHighest),
-              child: Center(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text('${(v * 100).floor()}%',
-                      style: t.displaySmall?.copyWith(
-                          fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
-                  Text(Fmt.bytes(got), style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-                ]),
+              // Inside the ring the label shrinks to fit rather than overflow.
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text('${(v * 100).floor()}%',
+                        style: t.displaySmall?.copyWith(
+                            fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
+                    Text(Fmt.bytes(got), style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                  ]),
+                ),
               ),
             ),
           ),

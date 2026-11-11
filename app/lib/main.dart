@@ -23,7 +23,8 @@ Future<void> main() async {
 
 /// The app's long-lived objects, reachable from any widget with [AppScope.of].
 class AppServices {
-  AppServices({required this.repo, required this.httpClient}) : sync = SyncController(repo);
+  AppServices({required this.repo, required this.httpClient, SyncController? sync})
+      : sync = sync ?? SyncController(repo);
   final Repository repo;
   final http.Client httpClient;
   final SyncController sync;

@@ -300,8 +300,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           // Catch moment banner during the replay.
           Positioned(
             top: top + 68,
-            left: 0,
-            right: 0,
+            left: 16,
+            right: 16,
             child: Center(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
@@ -312,7 +312,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                     child: child,
                   ),
                 ),
-                child: _moment == null ? const SizedBox.shrink() : _MomentBanner(key: ValueKey(_moment!.id), data: d, c: _moment!),
+                child: _moment == null ? const SizedBox.shrink() : MomentBanner(key: ValueKey(_moment!.id), data: d, c: _moment!),
               ),
             ),
           ),
@@ -390,14 +390,19 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         Text(Fmt.dayLong(s.start).toUpperCase(),
             style: t.labelMedium?.copyWith(color: cs.primary, letterSpacing: 0.8, fontWeight: FontWeight.w700)),
         const SizedBox(height: 2),
-        Row(children: [
-          Expanded(
-            child: Text(Fmt.tripName(s.startMs), style: t.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-          ),
-          Wrap(spacing: 6, children: [
-            for (final e in {'Jase': 0, 'Matt': 0, ...s.catchesByAngler}.entries) AnglerCount(e.key, e.value),
-          ]),
-        ]),
+        // A Wrap, so the counts drop below the name when there isn't room.
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            Text(Fmt.tripName(s.startMs), style: t.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final e in {'Jase': 0, 'Matt': 0, ...s.catchesByAngler}.entries) AnglerCount(e.key, e.value),
+            ]),
+          ],
+        ),
         const SizedBox(height: 4),
         Text('${Fmt.timeMs(s.startMs)} – ${Fmt.timeMs(s.endMs)}',
             style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
@@ -496,19 +501,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(children: [
-        GridView(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          // A fixed height that grows with the text size, not a ratio of the
-          // width: a ratio was 6 px too short on the S21.
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            mainAxisExtent: 32 + MediaQuery.textScalerOf(context).scale(46),
-          ),
-          children: tiles,
-        ),
+        StatGrid(children: tiles),
         const SizedBox(height: 12),
         const _SpeedLegend(),
       ]),
@@ -631,8 +624,9 @@ class _RoundButton extends StatelessWidget {
   }
 }
 
-class _MomentBanner extends StatelessWidget {
-  const _MomentBanner({super.key, required this.data, required this.c});
+/// "Jase catch #2 · 9:41 am", shown over the map as the replay passes a catch.
+class MomentBanner extends StatelessWidget {
+  const MomentBanner({super.key, required this.data, required this.c});
   final TripData data;
   final StoredCatch c;
   @override
@@ -650,10 +644,14 @@ class _MomentBanner extends StatelessWidget {
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           const Icon(Icons.phishing_rounded, color: Colors.white, size: 22),
           const SizedBox(width: 8),
-          Text('${c.angler} catch #$n',
-              style: t.titleMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w800)),
+          Flexible(
+            child: Text('${c.angler} catch #$n',
+                style: t.titleMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w800)),
+          ),
           const SizedBox(width: 8),
-          Text(Fmt.time(c.time!), style: t.bodyMedium?.copyWith(color: Colors.white.withValues(alpha: 0.9))),
+          Flexible(
+            child: Text(Fmt.time(c.time!), style: t.bodyMedium?.copyWith(color: Colors.white.withValues(alpha: 0.9))),
+          ),
         ]),
       ),
     );
