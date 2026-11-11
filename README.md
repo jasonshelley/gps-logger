@@ -11,7 +11,7 @@ A handheld GPS logger on a Waveshare ESP32-C6-LCD-1.47. It records the boat's tr
 
 | Part | Notes |
 |---|---|
-| Waveshare ESP32-C6-LCD-1.47 | ESP32-C6FH4 (4 MB flash), 172 × 320 ST7789 LCD, microSD slot, USB-C |
+| Waveshare ESP32-C6-LCD-1.47 | ESP32-C6 with in-package flash (the schematic says C6FH4, 4 MB; Jason's unit is a C6FH8, 8 MB). 172 × 320 ST7789 LCD, microSD slot, USB-C. The build uses a 4 MB layout, which runs on either |
 | GPS receiver | Any NMEA receiver at 9600 baud, 8N1 |
 | 2 momentary buttons | "Jase" and "Matt" |
 | 1 two-position switch | Logging / Transfer |
