@@ -476,7 +476,9 @@ class _FileList extends StatelessWidget {
               FileState.downloading => '${Fmt.bytes(f.received)} of ${Fmt.bytes(f.size)}',
               FileState.saving => 'Saving…',
               FileState.confirming => 'Removing from the logger…',
-              FileState.done => 'Synced · ${Fmt.bytes(f.size)}',
+              FileState.done => f.alreadyHad
+                  ? 'Already on this phone · removed from the logger'
+                  : 'Synced · ${Fmt.bytes(f.size)}',
               FileState.failed => f.error ?? 'Failed',
             }),
           ),

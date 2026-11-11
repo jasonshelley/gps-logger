@@ -31,6 +31,9 @@ class FileProgress {
   int received = 0;
   FileState state = FileState.waiting;
   String? error;
+
+  /// Stored by an earlier, interrupted sync; this run only confirmed it.
+  bool alreadyHad = false;
 }
 
 enum FileState { waiting, downloading, saving, confirming, done, failed }
@@ -82,6 +85,7 @@ class SyncController extends ChangeNotifier {
   }
 
   void _set(SyncPhase p, {String? err}) {
+    debugPrint('[sync] ${p.name}${err != null ? ': $err' : ''}');
     phase = p;
     error = err;
     notifyListeners();
@@ -123,6 +127,7 @@ class SyncController extends ChangeNotifier {
   }
 
   Future<void> cancel() async {
+    debugPrint('[sync] cancelled');
     _cancelled = true;
     await _teardown();
     if (phase != SyncPhase.done) _set(SyncPhase.idle);
@@ -195,6 +200,8 @@ class SyncController extends ChangeNotifier {
       }
       _set(SyncPhase.listing);
       final listed = await _session!.list();
+      debugPrint('[sync] logger v${hello.version}, chunk ${hello.chunk}, ${listed.length} files: '
+          '${listed.map((f) => '${f.name} ${f.size}').join(', ')}');
       // Oldest first: the names sort by date, with gpsnodate last.
       listed.sort((a, b) => a.name.compareTo(b.name));
       files = [for (final f in listed) FileProgress(f.name, f.size)];
@@ -228,7 +235,10 @@ class SyncController extends ChangeNotifier {
         notifyListeners();
         final result = await repo.importLog(f.name, got.bytes, got.crc);
         summary.files++;
-        if (result.alreadyHad) summary.alreadyHad++;
+        if (result.alreadyHad) {
+          summary.alreadyHad++;
+          f.alreadyHad = true;
+        }
         summary.newPoints += result.newPoints;
         summary.newCatches += result.newCatches;
         summary.undatedCatches += result.undatedCatches;
@@ -240,11 +250,14 @@ class SyncController extends ChangeNotifier {
         await _session!.confirm(f.name, got.crc);
         await repo.markConfirmed(f.name, got.crc);
         f.state = FileState.done;
+        debugPrint('[sync] ${f.name}: ${got.bytes.length} bytes, CRC ${got.crc.toRadixString(16)}, '
+            '${result.newPoints} points, ${result.newCatches} catches, confirmed');
         notifyListeners();
       } catch (e) {
         if (_cancelled) return;
         f.state = FileState.failed;
         f.error = _friendly(e, 'Failed');
+        debugPrint('[sync] ${f.name} failed: $e');
         summary.failures.add('${f.name}: ${f.error}');
         notifyListeners();
         if (_transport == null || e is TransferException && e.message.contains('disconnected')) {
