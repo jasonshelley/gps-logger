@@ -175,13 +175,11 @@ A failed or interrupted file stays on the card. The first time it saves more tha
 
 #### Hosting the page
 
-The page is one static file, so any HTTPS host works. GitHub Pages is the simplest free option:
+The page is published with GitHub Pages at **https://jasonshelley.github.io/gps-logger/**. On the phone, bookmark it or use **Add to Home screen**.
 
-1. Make a GitHub repository (it can hold only `index.html`) and push `web/index.html` to it.
-2. Turn on Pages in **Settings → Pages** (deploy from branch `main`, folder `/`).
-3. Open `https://<user>.github.io/<repo>/` on the phone and bookmark it, or use **Add to Home screen**.
+The workflow `.github/workflows/pages.yml` republishes the `web/` folder whenever a push to `main` changes it. The repository's Pages source is set to **GitHub Actions**.
 
-Nothing has been published yet. For a quick test from a PC, `npx serve web` gives `http://localhost:3000`, which Chrome treats as secure.
+To test a change locally before pushing, serve `web/` from the PC, for example with `python -m http.server 3000 --bind 127.0.0.1 --directory web`, and open `http://127.0.0.1:3000`. Chrome treats `localhost` and `127.0.0.1` as secure.
 
 ## Files on the card
 
