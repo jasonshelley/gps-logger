@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPS Logger Transfer</title>
+<meta name="description" content="Download fishing GPS logs from the ESP32-C6 logger over Bluetooth and save them as GPX.">
+<style>
+  :root {
+    --bg: #f6f7f9; --fg: #16181d; --muted: #5d6470; --card: #ffffff; --line: #d9dde3;
+    --accent: #1565c0; --accent-fg: #ffffff; --ok: #2e7d32; --warn: #b26a00; --err: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101215; --fg: #e8eaed; --muted: #9aa0a6; --card: #1a1d21; --line: #2d3238;
+      --accent: #64a7f0; --accent-fg: #0b1320; --ok: #66bb6a; --warn: #ffb74d; --err: #ef5350;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 4px 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: .9rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 16px; background: var(--accent);
+           color: var(--accent-fg); font-weight: 600; min-height: 44px; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; }
+  #state { font-weight: 600; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  ul#files { list-style: none; margin: 0; padding: 0; }
+  #files li { padding: 10px 0; border-top: 1px solid var(--line); }
+  #files li:first-child { border-top: 0; }
+  .fname { font-weight: 600; word-break: break-all; }
+  .meta { color: var(--muted); font-size: .85rem; }
+  progress { width: 100%; height: 10px; margin-top: 6px; accent-color: var(--accent); }
+  label.opt { display: flex; gap: 8px; align-items: center; margin-top: 10px; color: var(--muted); }
+  #log { font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--muted);
+         white-space: pre-wrap; max-height: 180px; overflow-y: auto; margin: 0; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>GPS Logger Transfer</h1>
+  <p class="sub">Put the logger's switch on Transfer, then connect. Chrome on Android only.</p>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect">Connect</button>
+      <button id="disconnect" class="secondary" disabled>Disconnect</button>
+      <span id="state">Not connected</span>
+    </div>
+    <label class="opt"><input type="checkbox" id="saveCsv"> Also save the raw CSV</label>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content: space-between">
+      <strong>Files on the logger</strong>
+      <div class="row">
+        <button id="refresh" class="secondary" disabled>Refresh</button>
+        <button id="getAll" disabled>Download all</button>
+      </div>
+    </div>
+    <ul id="files"><li class="empty">Connect to see files.</li></ul>
+  </div>
+
+  <div class="card">
+    <strong>Log</strong>
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+// ---- Protocol (docs/ble-protocol.md) ----
+const SERVICE = "1f5f0001-56c8-49fb-9d0c-055269d0a2e3";
+const RX_CHAR = "1f5f0002-56c8-49fb-9d0c-055269d0a2e3"; // write
+const TX_CHAR = "1f5f0003-56c8-49fb-9d0c-055269d0a2e3"; // notify
+const CMD = { HELLO: 0x01, LIST: 0x02, GET: 0x03, CONFIRM: 0x04, ABORT: 0x05 };
+const EVT = { HELLO: 0x81, FILE: 0x82, LIST_END: 0x83, BEGIN: 0x84, END: 0x85, CONFIRMED: 0x86,
+              DATA: 0x90, ERROR: 0xEE };
+const PROTOCOL_VERSION = 1;
+
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+let device = null, rx = null, tx = null;
+let busy = false;
+let files = [];               // [{name, size, status}]
+let transfer = null;          // current download
+let waiters = [];             // [{test, resolve, reject, timer}]
+
+function log(msg, cls) {
+  const line = document.createElement("span");
+  if (cls) line.className = cls;
+  line.textContent = new Date().toLocaleTimeString() + "  " + msg + "\n";
+  $("log").appendChild(line);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function setState(text, cls) {
+  $("state").textContent = text;
+  $("state").className = cls || "";
+}
+
+function updateButtons() {
+  const connected = !!(device && device.gatt.connected);
+  $("connect").disabled = connected || busy;
+  $("disconnect").disabled = !connected;
+  $("refresh").disabled = !connected || busy;
+  $("getAll").disabled = !connected || busy || !files.some(f => f.status !== "done");
+  document.querySelectorAll("button.get").forEach(b => b.disabled = !connected || busy);
+}
+
+// ---- CRC-32 (same as the firmware: zlib/IEEE, reflected 0xEDB88320) ----
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ---- BLE plumbing ----
+function u32(dv, off) { return dv.getUint32(off, true); }
+
+async function send(bytes) {
+  // writeValueWithResponse keeps commands in order and tells us if one was lost.
+  await rx.writeValueWithResponse(bytes);
+}
+
+function sendCmd(op, payload) {
+  const p = payload || new Uint8Array(0);
+  const b = new Uint8Array(1 + p.length);
+  b[0] = op;
+  b.set(p, 1);
+  return send(b);
+}
+
+// Resolves with the first event for which test(evt) returns true.
+function waitFor(test, timeoutMs, what) {
+  return new Promise((resolve, reject) => {
+    const w = { test, resolve, reject };
+    w.timer = setTimeout(() => {
+      waiters = waiters.filter(x => x !== w);
+      reject(new Error("Timed out waiting for " + what));
+    }, timeoutMs);
+    waiters.push(w);
+  });
+}
+
+function dispatch(evt) {
+  if (evt.op === EVT.ERROR) log("Logger error " + evt.code + ": " + evt.text, "err");
+  for (const w of waiters) {
+    if (w.test(evt)) {
+      clearTimeout(w.timer);
+      waiters = waiters.filter(x => x !== w);
+      w.resolve(evt);
+      return;
+    }
+  }
+}
+
+function failWaiters(err) {
+  for (const w of waiters) { clearTimeout(w.timer); w.reject(err); }
+  waiters = [];
+}
+
+function onNotify(e) {
+  const dv = e.target.value;
+  const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  const op = bytes[0];
+  if (op === EVT.DATA) return onData(dv, bytes);
+  const evt = { op };
+  switch (op) {
+    case EVT.HELLO: evt.version = bytes[1]; evt.chunk = dv.getUint16(2, true); break;
+    case EVT.FILE:
+    case EVT.BEGIN: evt.size = u32(dv, 1); evt.name = dec.decode(bytes.subarray(5)); break;
+    case EVT.LIST_END: evt.count = dv.getUint16(1, true); break;
+    case EVT.END: evt.size = u32(dv, 1); evt.crc = u32(dv, 5); break;
+    case EVT.CONFIRMED: evt.name = dec.decode(bytes.subarray(1)); break;
+    case EVT.ERROR: evt.code = bytes[1]; evt.text = dec.decode(bytes.subarray(2)); break;
+  }
+  if (op === EVT.FILE && listing) listing.push({ name: evt.name, size: evt.size, status: "" });
+  dispatch(evt);
+}
+
+function onData(dv, bytes) {
+  if (!transfer || !transfer.buf) return;
+  const off = u32(dv, 1);
+  const payload = bytes.subarray(5);
+  if (off !== transfer.received) {
+    transfer.error = "Data out of order at " + off + " (expected " + transfer.received + ")";
+    return;
+  }
+  if (off + payload.length > transfer.buf.length) {
+    transfer.error = "More data than the file size";
+    return;
+  }
+  transfer.buf.set(payload, off);
+  transfer.received += payload.length;
+  transfer.lastDataAt = Date.now();
+  transfer.onProgress(transfer.received, transfer.buf.length);
+}
+
+function onDisconnected() {
+  log("Disconnected", "warn");
+  setState("Not connected");
+  failWaiters(new Error("Disconnected"));
+  rx = tx = null;
+  busy = false;
+  transfer = null;
+  updateButtons();
+}
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    log("Web Bluetooth isn't available. Use Chrome on Android, over HTTPS.", "err");
+    return;
+  }
+  try {
+    busy = true; updateButtons();
+    setState("Choose the logger…");
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    setState("Connecting…");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE);
+    rx = await svc.getCharacteristic(RX_CHAR);
+    tx = await svc.getCharacteristic(TX_CHAR);
+    tx.addEventListener("characteristicvaluechanged", onNotify);
+    await tx.startNotifications();
+
+    const hello = waitFor(e => e.op === EVT.HELLO, 5000, "HELLO");
+    await sendCmd(CMD.HELLO);
+    const h = await hello;
+    if (h.version !== PROTOCOL_VERSION) log("Logger protocol v" + h.version + ", page expects v" + PROTOCOL_VERSION, "warn");
+    log("Connected to " + (device.name || "logger") + ", " + h.chunk + "-byte chunks", "ok");
+    setState("Connected", "ok");
+    busy = false;
+    await refreshList();
+  } catch (err) {
+    busy = false;
+    log(err.message || String(err), "err");
+    setState(device && device.gatt.connected ? "Connected" : "Not connected");
+  }
+  updateButtons();
+}
+
+let listing = null;
+async function refreshList() {
+  busy = true; updateButtons();
+  try {
+    listing = [];
+    const end = waitFor(e => e.op === EVT.LIST_END || e.op === EVT.ERROR, 10000, "file list");
+    await sendCmd(CMD.LIST);
+    const e = await end;
+    if (e.op === EVT.ERROR) throw new Error(e.text);
+    files = listing;
+    log(files.length + " file(s) on the logger");
+  } catch (err) {
+    log("List failed: " + err.message, "err");
+  } finally {
+    listing = null;
+    busy = false;
+    renderFiles();
+  }
+}
+
+// ---- File list UI ----
+function fmtSize(n) {
+  return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(2) + " MB";
+}
+
+function renderFiles() {
+  const ul = $("files");
+  ul.textContent = "";
+  if (!files.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = device && device.gatt.connected ? "No log files waiting." : "Connect to see files.";
+    ul.appendChild(li);
+  }
+  for (const f of files) {
+    const li = document.createElement("li");
+    const top = document.createElement("div");
+    top.className = "row";
+    top.style.justifyContent = "space-between";
+    const info = document.createElement("div");
+    const nm = document.createElement("div"); nm.className = "fname"; nm.textContent = f.name;
+    const meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = fmtSize(f.size) + (f.status ? " · " + f.status : "");
+    if (f.status === "done") meta.classList.add("ok");
+    if (f.status && f.status.startsWith("failed")) meta.classList.add("err");
+    info.append(nm, meta);
+    const btn = document.createElement("button");
+    btn.className = "get secondary";
+    btn.textContent = f.status === "done" ? "Again" : "Download";
+    btn.addEventListener("click", () => downloadOne(f));
+    top.append(info, btn);
+    li.appendChild(top);
+    const prog = document.createElement("progress");
+    prog.max = 1; prog.value = 0; prog.hidden = true;
+    li.appendChild(prog);
+    f.el = { meta, prog };
+    ul.appendChild(li);
+  }
+  updateButtons();
+}
+
+function setFileStatus(f, status) {
+  f.status = status;
+  if (f.el) {
+    f.el.meta.textContent = fmtSize(f.size) + (status ? " · " + status : "");
+    f.el.meta.className = "meta" + (status === "done" ? " ok" : status.startsWith("failed") ? " err" : "");
+  }
+}
+
+// ---- Transfer ----
+async function fetchFile(f) {
+  const t = { name: f.name, buf: null, received: 0, error: null, lastDataAt: Date.now(),
+              onProgress: (r, n) => { if (f.el) { f.el.prog.hidden = false; f.el.prog.value = n ? r / n : 1; } } };
+  transfer = t;
+  try {
+    const begin = waitFor(e => (e.op === EVT.BEGIN && e.name === f.name) || e.op === EVT.ERROR, 10000, "BEGIN");
+    // Register for END before asking, so a tiny file can't finish before we listen.
+    const endP = new Promise((resolve, reject) => { t.endResolve = resolve; t.endReject = reject; });
+    const endWaiter = waitFor(e => e.op === EVT.END || e.op === EVT.ERROR, 24 * 3600 * 1000, "END");
+    endWaiter.then(e => t.endResolve(e), err => t.endReject(err));
+
+    await sendCmd(CMD.GET, enc.encode(f.name));
+    const b = await begin;
+    if (b.op === EVT.ERROR) throw new Error(b.text);
+    t.buf = new Uint8Array(b.size);
+    t.lastDataAt = Date.now();
+
+    // Watchdog: give up if data stops for 15 s.
+    const stall = new Promise((_, reject) => {
+      t.watch = setInterval(() => {
+        if (Date.now() - t.lastDataAt > 15000) reject(new Error("Transfer stalled"));
+      }, 1000);
+    });
+    const e = await Promise.race([endP, stall]);
+    if (e.op === EVT.ERROR) throw new Error(e.text);
+    if (t.error) throw new Error(t.error);
+    if (t.received !== e.size || e.size !== t.buf.length) throw new Error("Got " + t.received + " of " + e.size + " bytes");
+    const crc = crc32(t.buf);
+    if (crc !== e.crc) throw new Error("CRC mismatch: logger " + e.crc.toString(16) + ", page " + crc.toString(16));
+    return { bytes: t.buf, crc };
+  } catch (err) {
+    try { await sendCmd(CMD.ABORT); } catch (_) {}
+    failWaiters(err);   // drops the END waiter for this file
+    throw err;
+  } finally {
+    clearInterval(t.watch);
+    transfer = null;
+  }
+}
+
+async function confirmFile(name, crc) {
+  const p = new Uint8Array(4 + name.length);
+  new DataView(p.buffer).setUint32(0, crc, true);
+  p.set(enc.encode(name), 4);
+  const done = waitFor(e => (e.op === EVT.CONFIRMED && e.name === name) || e.op === EVT.ERROR, 30000, "CONFIRMED");
+  await sendCmd(CMD.CONFIRM, p);
+  const e = await done;
+  if (e.op === EVT.ERROR) throw new Error(e.text);
+}
+
+function saveBlob(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+async function downloadOne(f) {
+  if (busy) return;
+  busy = true; updateButtons();
+  try {
+    await transferFile(f);
+  } finally {
+    busy = false;
+    updateButtons();
+  }
+}
+
+async function downloadAll() {
+  if (busy) return;
+  busy = true; updateButtons();
+  try {
+    for (const f of files.filter(x => x.status !== "done")) {
+      if (!device || !device.gatt.connected) break;
+      await transferFile(f);
+    }
+  } finally {
+    busy = false;
+    updateButtons();
+  }
+}
+
+async function transferFile(f) {
+  const t0 = Date.now();
+  try {
+    setFileStatus(f, "downloading");
+    const { bytes, crc } = await fetchFile(f);
+    const secs = (Date.now() - t0) / 1000;
+    log(f.name + ": " + fmtSize(bytes.length) + " in " + secs.toFixed(1) + " s, CRC OK");
+
+    const csv = dec.decode(bytes);
+    const base = f.name.replace(/\.csv$/i, "");
+    const { gpx, points, catches, skipped } = csvToGpx(csv, base);
+    saveBlob(base + ".gpx", gpx, "application/gpx+xml");
+    if ($("saveCsv").checked) saveBlob(f.name, csv, "text/csv");
+    log(base + ".gpx: " + points + " track point(s), " + catches + " catch waypoint(s)" +
+        (skipped ? ", " + skipped + " catch(es) without a position" : ""), skipped ? "warn" : "");
+
+    setFileStatus(f, "confirming");
+    await confirmFile(f.name, crc);
+    setFileStatus(f, "done");
+    log(f.name + " moved to /uploaded on the logger", "ok");
+  } catch (err) {
+    setFileStatus(f, "failed: " + err.message);
+    log(f.name + " failed: " + err.message + " (the file stays on the logger)", "err");
+  } finally {
+    if (f.el) f.el.prog.hidden = f.status !== "done";
+  }
+}
+
+// ---- CSV -> GPX ----
+function xmlEscape(s) {
+  return String(s).replace(/[<>&"']/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+
+// Numbers from the CSV go into XML attributes, so only let plain decimals through.
+function num(s) { return /^-?\d+(\.\d+)?$/.test(s) ? s : ""; }
+
+function csvToGpx(csv, name) {
+  const lines = csv.split(/\r?\n/).filter(l => l.length);
+  const header = (lines.shift() || "").split(",");
+  const col = (n) => header.indexOf(n);
+  const C = { type: col("type"), time: col("time_utc"), lat: col("lat"), lon: col("lon"), ele: col("alt_m"),
+              hdop: col("hdop"), sats: col("sats_tracked"), age: col("fix_age_s"), comment: col("comment") };
+  if (C.type < 0 || C.lat < 0 || C.lon < 0) throw new Error("Not a logger CSV (missing columns)");
+
+  const SEGMENT_GAP_MS = 15 * 60 * 1000;  // new track segment after a 15 min gap (logger off)
+  const segs = [];
+  let seg = null, lastT = null;
+  const wpts = [];
+  let points = 0, skipped = 0;
+
+  for (const line of lines) {
+    const f = line.split(",");
+    const get = (i) => (i >= 0 && i < f.length ? f[i] : "");
+    const type = get(C.type), lat = num(get(C.lat)), lon = num(get(C.lon)), time = get(C.time);
+    const ele = num(get(C.ele)), sats = num(get(C.sats)), hdop = num(get(C.hdop));
+    if (type === "track") {
+      if (!lat || !lon) continue;
+      const t = time ? Date.parse(time) : null;
+      if (!seg || (t !== null && lastT !== null && t - lastT > SEGMENT_GAP_MS)) { seg = []; segs.push(seg); }
+      if (t !== null) lastT = t;
+      let p = '      <trkpt lat="' + lat + '" lon="' + lon + '">';
+      if (ele) p += "<ele>" + ele + "</ele>";
+      if (time) p += "<time>" + xmlEscape(time) + "</time>";
+      if (sats) p += "<sat>" + sats + "</sat>";
+      if (hdop) p += "<hdop>" + hdop + "</hdop>";
+      p += "</trkpt>";
+      seg.push(p);
+      points++;
+    } else if (type === "catch") {
+      if (!lat || !lon) { skipped++; continue; }
+      const comment = get(C.comment) || "Catch";
+      const age = get(C.age);
+      const desc = age && age !== "0" ? "Position from a fix " + age + " s old" : "Position from the current fix";
+      let w = '  <wpt lat="' + lat + '" lon="' + lon + '">';
+      if (ele) w += "<ele>" + ele + "</ele>";
+      if (time) w += "<time>" + xmlEscape(time) + "</time>";
+      w += "<name>" + xmlEscape(comment) + "</name><desc>" + xmlEscape(desc) + "</desc>";
+      w += "<sym>Fishing Area</sym><type>catch</type></wpt>";
+      wpts.push(w);
+    }
+  }
+
+  const out = [];
+  out.push('<?xml version="1.0" encoding="UTF-8"?>');
+  out.push('<gpx version="1.1" creator="GPS Logger Transfer" xmlns="http://www.topografix.com/GPX/1/1">');
+  out.push("  <metadata><name>" + xmlEscape(name) + "</name></metadata>");
+  out.push(...wpts);
+  if (segs.length) {
+    out.push("  <trk><name>" + xmlEscape(name) + "</name>");
+    for (const s of segs) out.push("    <trkseg>", ...s, "    </trkseg>");
+    out.push("  </trk>");
+  }
+  out.push("</gpx>", "");
+  return { gpx: out.join("\n"), points, catches: wpts.length, skipped };
+}
+
+// ---- Wire up ----
+$("connect").addEventListener("click", connect);
+$("disconnect").addEventListener("click", () => device && device.gatt.connected && device.gatt.disconnect());
+$("refresh").addEventListener("click", refreshList);
+$("getAll").addEventListener("click", downloadAll);
+try { $("saveCsv").checked = localStorage.getItem("saveCsv") === "1"; } catch (_) {}
+$("saveCsv").addEventListener("change", () => { try { localStorage.setItem("saveCsv", $("saveCsv").checked ? "1" : "0"); } catch (_) {} });
+if (!navigator.bluetooth) log("Web Bluetooth isn't available here. Open this page in Chrome on Android, over HTTPS.", "warn");
+updateButtons();
+</script>
+</body>
+</html>
