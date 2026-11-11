@@ -357,7 +357,7 @@ static void initBle() {
       svc->createCharacteristic(kRxUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR, kMaxCmd);
   rx->setCallbacks(new RxCallbacks());
   s_tx = svc->createCharacteristic(kTxUuid, NIMBLE_PROPERTY::NOTIFY, 5 + kMaxChunk);
-  svc->start();
+  // NimBLE 2.x starts the GATT server (and its services) when advertising starts.
 
   // 128-bit UUID in the advert (so the page can filter on it), name in the scan response.
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();

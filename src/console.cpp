@@ -160,7 +160,7 @@ static void rmAll() {
   });
   for (int i = 0; i < count; i++) {
     char path[40];
-    snprintf(path, sizeof(path), "/%s", names[i]);
+    snprintf(path, sizeof(path), "/%.31s", names[i]);
     Serial.printf("Removing %s: %s\n", path, SD.remove(path) ? "done" : "FAILED");
   }
   if (count == 64) Serial.println("Stopped at 64 files; run it again for the rest");

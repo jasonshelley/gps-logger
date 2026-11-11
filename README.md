@@ -56,6 +56,18 @@ pio run
 
 The first build downloads the pioarduino platform (Arduino core 3.3.12 for the ESP32-C6), the RISC-V toolchain and the libraries. That's about 1 GB.
 
+**On Windows:**
+
+- The ESP32 core has file paths up to 260 characters long. That's too long even under `C:\Users\<you>\.platformio` unless Windows long paths are turned on. Either turn on long paths (an admin setting: `LongPathsEnabled` = 1), or give PlatformIO a short core folder before building. On this machine the build uses `C:\pio`:
+
+  ```powershell
+  $env:PLATFORMIO_CORE_DIR = "C:\pio"
+  ```
+
+- Run `pio` from PowerShell or cmd, not Git Bash. pioarduino's tool installer refuses to run under MSYS/MinGW, and if it doesn't run, the compiler isn't set up (`riscv32-esp-elf-gcc is not recognized`).
+
+A clean build uses about 28% of RAM (91 KB) and 1.07 MB of the 3 MB app partition.
+
 Pinned versions (see [platformio.ini](platformio.ini)):
 
 | Package | Version |
@@ -228,4 +240,4 @@ docs/                   requirements and protocol
 
 ## Not yet tested on hardware
 
-The firmware builds, but none of it has run on the board yet. See the bottom of [docs/requirements.md](docs/requirements.md) for the list of things to check on first power-up.
+`pio run` builds with no warnings in the project's own code, but none of it has run on the board yet. See the bottom of [docs/requirements.md](docs/requirements.md) for the list of things to check on first power-up.
