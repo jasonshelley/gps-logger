@@ -68,6 +68,7 @@ class SyncController extends ChangeNotifier {
   LoggerSession? _session;
   StreamSubscription<AvailabilityState>? _btSub;
   bool _cancelled = false;
+  bool _finishingFile = false; // stored or storing, CONFIRM not yet done
   bool _running = false;
 
   bool get busy => _running;
@@ -95,6 +96,7 @@ class SyncController extends ChangeNotifier {
     if (_running) return;
     _running = true;
     _cancelled = false;
+    _finishingFile = false;
     summary = SyncSummary();
     files = [];
     currentIndex = -1;
@@ -129,7 +131,9 @@ class SyncController extends ChangeNotifier {
   Future<void> cancel() async {
     debugPrint('[sync] cancelled');
     _cancelled = true;
-    await _teardown();
+    // A file that is already stored still gets its CONFIRM; the run stops
+    // straight after it and closes the link itself.
+    if (!_finishingFile) await _teardown();
     if (phase != SyncPhase.done) _set(SyncPhase.idle);
   }
 
@@ -193,6 +197,8 @@ class SyncController extends ChangeNotifier {
     _set(SyncPhase.connecting);
     try {
       _transport = await BleLoggerTransport.connect(device.deviceId);
+      // cancel() during connect had no link to close yet.
+      if (_cancelled) return;
       _session = LoggerSession(_transport!);
       final hello = await _session!.hello();
       if (hello.version != protocolVersion) {
@@ -223,6 +229,7 @@ class SyncController extends ChangeNotifier {
         f.state = FileState.downloading;
         notifyListeners();
         var lastNotify = DateTime.now();
+        final getStart = DateTime.now();
         final got = await _session!.get(f.name, onProgress: (r, n) {
           f.received = r;
           final now = DateTime.now();
@@ -231,8 +238,14 @@ class SyncController extends ChangeNotifier {
             notifyListeners();
           }
         });
+        if (_cancelled) return;
+        final getMs = DateTime.now().difference(getStart).inMilliseconds;
         f.state = FileState.saving;
         notifyListeners();
+        // From here the file is finished even if cancel() is called: storing
+        // it and then not confirming would leave it on the logger to come
+        // across again.
+        _finishingFile = true;
         final result = await repo.importLog(f.name, got.bytes, got.crc);
         summary.files++;
         if (result.alreadyHad) {
@@ -249,15 +262,17 @@ class SyncController extends ChangeNotifier {
         notifyListeners();
         await _session!.confirm(f.name, got.crc);
         await repo.markConfirmed(f.name, got.crc);
+        _finishingFile = false;
         f.state = FileState.done;
-        debugPrint('[sync] ${f.name}: ${got.bytes.length} bytes, CRC ${got.crc.toRadixString(16)}, '
-            '${result.newPoints} points, ${result.newCatches} catches, confirmed');
+        debugPrint('[sync] ${f.name}: ${got.bytes.length} bytes in $getMs ms, CRC ${got.crc.toRadixString(16)}, '
+            '${result.alreadyHad ? 'already stored' : '${result.newPoints} points, ${result.newCatches} catches'}, confirmed');
         notifyListeners();
-      } catch (e) {
+      } catch (e, st) {
+        _finishingFile = false;
+        debugPrint('[sync] ${f.name} error${_cancelled ? ' after cancel' : ''}: $e\n$st');
         if (_cancelled) return;
         f.state = FileState.failed;
         f.error = _friendly(e, 'Failed');
-        debugPrint('[sync] ${f.name} failed: $e');
         summary.failures.add('${f.name}: ${f.error}');
         notifyListeners();
         if (_transport == null || e is TransferException && e.message.contains('disconnected')) {

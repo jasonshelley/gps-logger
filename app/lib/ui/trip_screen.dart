@@ -496,13 +496,17 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(children: [
-        GridView.count(
-          crossAxisCount: 2,
+        GridView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 2.3,
+          // A fixed height that grows with the text size, not a ratio of the
+          // width: a ratio was 6 px too short on the S21.
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            mainAxisExtent: 32 + MediaQuery.textScalerOf(context).scale(46),
+          ),
           children: tiles,
         ),
         const SizedBox(height: 12),
