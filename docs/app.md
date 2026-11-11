@@ -65,6 +65,8 @@ flutter analyze
 
 The tests use the sample CSVs in `app/test/fixtures`. To regenerate those, run `python tool/make_fixtures.py` from `app/`.
 
+`test/metrics_test.dart` reads the shared fixtures in `test-data/` and checks the app gives the same figures as `tools/metrics.py` and the logger: 0 m and 0 s for `stationary-desk.csv`, and 6667 m and 11 205 s for `moving-noisy.csv`. It also checks the trip meter with a reset part way through a trip. The figures match exactly. The logger reports whole metres, so distances are compared rounded to the metre.
+
 `test/layout_test.dart` renders the home screen, every sync screen state, the trip stats, the catch cards and the replay banner at the S21's size (360 × 800 dp). It does this at font scales 1.0, 1.1 (the S21's setting), 1.3, 1.5 and 2.0, and fails on any overflow. The test font is wider than Roboto, so it's stricter than the phone. The trip screen as a whole isn't covered, because its map is a platform view.
 
 ### Build settings that differ from Flutter's template
@@ -123,23 +125,30 @@ Connecting asks for MTU 247 and high connection priority, which gives 239-byte c
 | `files` | One row per received file, keyed by (name, CRC). The raw CSV is kept in the app's documents folder (`logs/`), exactly as received |
 | `points` | Track points, keyed by time in ms. Importing the same rows again does nothing, which matters because the logger re-sends a day's later rows as a new file with the same name |
 | `catches` | Unique on (time, angler). Catches with no date have a null time and are shown apart from trips |
-| `trips` | Derived after every import. A trip is a run of records with no gap longer than 45 min. Its id is its start time |
+| `trips` | Derived after every import. A trip is a run of records with no gap longer than 45 min. Its id is its start time. Schema version 3 added `water_s` (time on the water); `moving_s` and, in databases upgraded from version 2, `logged_s` are no longer used |
 | `trip_conditions` | The Open-Meteo responses for each trip, cached so a trip opens offline |
 | `settings` | Key-value settings, added in schema version 2: the trip meter's reset time, and a reset still to be sent to the logger |
 
 How trip stats are worked out:
 
-- **Distance** is the sum of haversine legs inside each route segment. Segments break at gaps over 15 min, the same rule as the GPX export. Legs implying more than 120 km/h count as GPS glitches and are skipped.
-- **Moving time** counts the legs where the average speed is at least 2 km/h.
+- **Distance** and **time on the water** follow the movement rule in [metrics.md](metrics.md), the same rule as the logger and `tools/metrics.py`. [move_meter.dart](../app/lib/core/move_meter.dart) is a straight port. In short:
+  - Points with HDOP over 5 are ignored.
+  - The position must leave a circle of max(25 m, 30 m × HDOP) around the last counted position and stay out for 30 s before the move counts.
+  - A gap of more than 900 s starts a new stretch.
+  - Time on the water runs from the first move to the last in each stretch.
+  - So GPS jitter while the boat sits still adds nothing. A logger on a desk reads 0 m, where the old leg-by-leg sum read about 3.2 km.
+- Distances use the logger's atan2 formula with a radius of 6 371 009 m, so both round the same way. Points are fed in time order, which is the file order for the logger's files.
+- The trip screen shows **On the water** where it used to show Moving time.
+- **Max speed** is the fastest speed reading while moving. The logger's speed reading jitters too, up to 5 km/h on a desk, so readings at the stops and from poor fixes don't count.
+- Schema version 3 recomputes every stored trip once, at start-up (`Repository.upgradeTrips()`), so trips synced before the rule show corrected figures.
 
 ### Trip meter and totals
 
 The top of the home screen works like a car's trip meter. It shows catches per angler, distance and time on the water since the last **Reset**. The card below it shows the all-time totals: catches per angler, distance, time on the water, trips, and fish in all.
 
-- The reset time is stored in the `settings` table (schema version 2) as UTC milliseconds, rounded to the second. The meter is worked out from the synced data, so a reset works with no logger in reach.
+- The reset time is stored in the `settings` table (added in schema version 2) as UTC milliseconds, rounded to the second. The meter is worked out from the synced data, so a reset works with no logger in reach.
 - Trips that started after the reset count in full. A trip under way at the reset counts only from the reset on: its stats are recomputed from the points and catches after it.
-- **Time on the water** follows the logger's rule, so the two screens agree. It's the sum of the gaps between consecutive track points at most 15 minutes apart. A longer gap means the logger was off or had no fix. Each trip stores this as `trips.logged_s`. Schema version 2 added that column, and `Repository.upgradeTrips()` fills it in once, at start-up, for trips stored before the upgrade.
-- Distance uses the same 15-minute pairs. The phone also skips GPS glitches (legs implying over 120 km/h) and the logger doesn't, so the phone can read a little lower.
+- Distance and time on the water use the movement rule above, as the logger does, so the two meters agree. For a trip under way at the reset, the first point at or after the reset starts a new stretch, as [metrics.md](metrics.md) says.
 - The totals include catches the logger made before it had the time. The meter leaves those out, because it can't tell whether they came before or after the reset. The logger counts them live, so its meter can be higher by those catches.
 
 #### Keeping the logger's meter in step
@@ -161,6 +170,12 @@ Moving files to `/uploaded` doesn't change the logger's meter, so the reading ta
 
 - **Base map:** MapLibre ([maplibre_gl](https://pub.dev/packages/maplibre_gl)) with the OpenFreeMap `positron` style in light mode and `dark` in dark mode. The attribution button stays on the map, as OpenStreetMap requires.
 - **Route:** short GeoJSON line features coloured by speed, from indigo when drifting to yellow when flat out. Each feature carries its end time.
+- **Jitter:** the map and the replay draw `displayTrack()` from [move_meter.dart](../app/lib/core/move_meter.dart), not the raw points.
+  - Points the movement rule ignores (HDOP over 5) are left out.
+  - Points that never became a confirmed move are pinned to where the boat sat, with a speed of 0.
+  - So a stop is drawn as a dot in the slowest colour, not a scribble, and the boat marker sits still.
+  - Points that turn out to be part of a move keep their own positions, so the line still follows the boat. On `moving-noisy.csv` the drawn line is 6885 m (true 6831 m), where the raw points make 8178 m.
+  - The GPX export keeps every point as logged.
 - **Catch pins:** circles in each angler's colour: Jase orange, Matt fuchsia. Tapping a pin scrolls the sheet to that catch.
 - **Replay:** a layer filter (`t <= now`) reveals the route and the pins as time passes, over a faded copy of the whole route. A boat marker moves along the route, interpolated between points. Each frame changes only filters and one point, so no route geometry is re-sent. Playback speed defaults to about 40 s for the whole trip and can be changed from 30× to 1200×. A banner and a haptic tap mark each catch.
 

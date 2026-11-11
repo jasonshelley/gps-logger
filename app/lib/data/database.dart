@@ -1,7 +1,7 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-const int schemaVersion = 2;
+const int schemaVersion = 3;
 
 /// Opens (and creates or upgrades) the app's SQLite database.
 /// [factory] lets tests pass the in-memory FFI factory.
@@ -18,10 +18,13 @@ Future<Database> openAppDatabase({DatabaseFactory? factory, String? path}) async
         await _createSettings(db);
       },
       onUpgrade: (db, from, to) async {
-        if (from < 2) {
-          await _createSettings(db);
-          // Filled in by Repository.upgradeTrips() at the next start.
-          await db.execute('ALTER TABLE trips ADD COLUMN logged_s INTEGER');
+        if (from < 2) await _createSettings(db);
+        if (from < 3) {
+          // Distance and time by the movement rule (docs/metrics.md). Filled
+          // in, with every trip's distance recomputed, by
+          // Repository.upgradeTrips() at the next start. A version 2
+          // database keeps its unused logged_s column.
+          await db.execute('ALTER TABLE trips ADD COLUMN water_s INTEGER');
         }
       },
     ),
@@ -80,8 +83,8 @@ Future<void> _create(Database db) async {
       id INTEGER PRIMARY KEY,
       end_t INTEGER NOT NULL,
       distance_m REAL NOT NULL,
-      moving_s INTEGER NOT NULL,
-      logged_s INTEGER,
+      moving_s INTEGER NOT NULL, -- unused since version 3, always 0
+      water_s INTEGER,
       max_speed REAL,
       points INTEGER NOT NULL,
       catches TEXT NOT NULL,
@@ -100,7 +103,6 @@ Future<void> _create(Database db) async {
   await b.commit(noResult: true);
 }
 
-/// Version 2: small key-value settings, such as the trip meter's reset time,
-/// and each trip's logged time (`trips.logged_s`).
+/// Version 2: small key-value settings, such as the trip meter's reset time.
 Future<void> _createSettings(Database db) =>
     db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');

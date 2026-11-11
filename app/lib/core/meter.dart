@@ -15,8 +15,7 @@ class MeterReading {
   final Map<String, int> catchesByAngler;
   final double distanceM;
 
-  /// Time spent logging, by the logger's rule: the gaps between consecutive
-  /// track points at most 15 min apart, added up.
+  /// Time on the water, by the movement rule in docs/metrics.md.
   final Duration onWater;
 
   /// Trips with at least one record in the range.
@@ -30,19 +29,19 @@ class MeterReading {
 /// which belong to no trip).
 MeterReading sumTrips(Iterable<TripStats> trips, {Map<String, int>? catchesByAngler}) {
   var distance = 0.0;
-  var ms = 0;
+  var waterS = 0;
   var n = 0;
   final byAngler = <String, int>{};
   for (final s in trips) {
     n++;
     distance += s.distanceM;
-    ms += s.loggedS * 1000;
+    waterS += s.waterS;
     s.catchesByAngler.forEach((k, v) => byAngler[k] = (byAngler[k] ?? 0) + v);
   }
   return MeterReading(
     catchesByAngler: catchesByAngler ?? byAngler,
     distanceM: distance,
-    onWater: Duration(milliseconds: ms),
+    onWater: Duration(seconds: waterS),
     trips: n,
   );
 }

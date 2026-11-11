@@ -2,18 +2,16 @@ import 'dart:math' as math;
 
 import 'geo.dart';
 import 'log_csv.dart';
+import 'move_meter.dart';
 
 /// A gap longer than this between records starts a new trip.
 const Duration tripGap = Duration(minutes: 45);
 
 /// A gap longer than this inside a trip breaks the route line (the logger was
-/// off), the same rule the GPX export uses. No distance is counted across it.
-const Duration segmentGap = Duration(minutes: 15);
+/// off), the same 900 s the movement rule and the GPX export use.
+const Duration segmentGap = Duration(seconds: moveSegmentGapS);
 
-/// Below this speed the boat counts as stopped (the logger uses the same 2 km/h).
-const double movingKmh = 2.0;
-
-/// Speeds above this are treated as GPS glitches.
+/// Speed readings above this are treated as GPS glitches.
 const double maxPlausibleKmh = 120.0;
 
 class TimeWindow {
@@ -67,8 +65,7 @@ class TripStats {
     required this.startMs,
     required this.endMs,
     required this.distanceM,
-    required this.movingS,
-    this.loggedS = 0,
+    required this.waterS,
     required this.maxSpeedKmh,
     required this.pointCount,
     required this.catchesByAngler,
@@ -77,13 +74,17 @@ class TripStats {
 
   final int startMs;
   final int endMs;
+  /// Distance moved, by the movement rule in docs/metrics.md: GPS jitter
+  /// while the boat sits still adds nothing.
   final double distanceM;
-  final int movingS;
 
-  /// Time spent logging: the sum of the gaps between consecutive points in
-  /// the same segment (at most 15 min apart). The logger's trip meter counts
-  /// "time on the water" the same way.
-  final int loggedS;
+  /// Time on the water, by the same rule: from the first move to the last in
+  /// each stretch of logging, added up. The logger's trip meter counts it the
+  /// same way.
+  final int waterS;
+
+  /// The fastest speed reading while moving: poor fixes and jitter at the
+  /// stops don't count. Null if the boat never moved.
   final double? maxSpeedKmh;
   final int pointCount;
   final Map<String, int> catchesByAngler;
@@ -91,42 +92,25 @@ class TripStats {
 
   Duration get duration => Duration(milliseconds: endMs - startMs);
   int get totalCatches => catchesByAngler.values.fold(0, (a, b) => a + b);
-  double? get avgMovingKmh => movingS > 0 ? distanceM / movingS * 3.6 : null;
+  Duration get onWater => Duration(seconds: waterS);
   DateTime get start => DateTime.fromMillisecondsSinceEpoch(startMs, isUtc: true);
   DateTime get end => DateTime.fromMillisecondsSinceEpoch(endMs, isUtc: true);
-}
-
-/// Speed between two points: the logger's own speed reading if both have one,
-/// otherwise distance over time.
-double _legSpeedKmh(TrackPoint a, TrackPoint b, double distM) {
-  if (a.speedKmh != null && b.speedKmh != null) return (a.speedKmh! + b.speedKmh!) / 2;
-  final dt = (b.t - a.t) / 1000;
-  return dt > 0 ? distM / dt * 3.6 : 0;
 }
 
 /// Stats for one trip. [points] and [catches] must already be the trip's
 /// records; points must be sorted by time.
 TripStats computeTripStats(List<TrackPoint> points, List<CatchEvent> catches) {
-  var distance = 0.0;
-  var moving = 0;
-  var loggedMs = 0;
-  double? maxSpeed;
-  for (final seg in splitSegments(points)) {
-    for (var i = 1; i < seg.length; i++) {
-      final a = seg[i - 1], b = seg[i];
-      final d = haversineM(a.lat, a.lon, b.lat, b.lon);
-      final dt = (b.t - a.t) / 1000;
-      if (dt <= 0) continue;
-      loggedMs += b.t - a.t; // even across a glitch: the logger was logging
-      final implied = d / dt * 3.6;
-      if (implied > maxPlausibleKmh) continue; // a jump, not a real leg
-      distance += d;
-      if (_legSpeedKmh(a, b, d) >= movingKmh) moving += dt.round();
-    }
-  }
+  final meter = MoveMeter();
   for (final p in points) {
+    meter.addPoint(p);
+  }
+  // Max speed and bounds from the route as drawn: no poor fixes, and no
+  // jitter (its speed readings are pinned to 0).
+  final track = displayTrack(points);
+  double? maxSpeed;
+  for (final p in track) {
     final s = p.speedKmh;
-    if (s != null && s <= maxPlausibleKmh) maxSpeed = math.max(maxSpeed ?? 0, s);
+    if (s != null && s > 0 && s <= maxPlausibleKmh) maxSpeed = math.max(maxSpeed ?? 0, s);
   }
 
   final byAngler = <String, int>{};
@@ -142,16 +126,15 @@ TripStats computeTripStats(List<TrackPoint> points, List<CatchEvent> catches) {
   final end = times.isEmpty ? 0 : times.reduce(math.max);
 
   final bounds = GeoBounds.of([
-    ...points.map((p) => (p.lat, p.lon)),
+    ...track.map((p) => (p.lat, p.lon)),
     ...catches.where((c) => c.hasPosition).map((c) => (c.lat!, c.lon!)),
   ]);
 
   return TripStats(
     startMs: start,
     endMs: end,
-    distanceM: distance,
-    movingS: moving,
-    loggedS: loggedMs ~/ 1000,
+    distanceM: meter.distanceM,
+    waterS: meter.waterS,
     maxSpeedKmh: maxSpeed,
     pointCount: points.length,
     catchesByAngler: byAngler,

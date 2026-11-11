@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import '../core/geo.dart';
 import '../core/log_csv.dart';
 import '../core/meter.dart';
+import '../core/move_meter.dart';
 import '../core/trips.dart';
 
 class Trip {
@@ -17,10 +18,15 @@ class Trip {
 }
 
 class TripData {
-  const TripData(this.trip, this.points, this.catches);
+  TripData(this.trip, this.points, this.catches);
   final Trip trip;
+
+  /// Every point, as logged.
   final List<TrackPoint> points;
   final List<StoredCatch> catches;
+
+  /// The route to draw and replay: jitter pinned, poor fixes left out.
+  late final List<TrackPoint> track = displayTrack(points);
 }
 
 /// A catch as stored, with its database id (used to key photos and conditions).
@@ -268,9 +274,9 @@ class Repository {
         final n = Sqflite.firstIntValue(await db.rawQuery(
                 'SELECT COUNT(*) FROM points WHERE t BETWEEN ? AND ?', [w.startMs, w.endMs])) ??
             0;
-        // A trip from before schema version 2 has no logged time yet: recompute it.
+        // A trip from before schema version 3 has old-rule figures: recompute it.
         final stored = Sqflite.firstIntValue(await db.rawQuery(
-                'SELECT points FROM trips WHERE id = ? AND logged_s IS NOT NULL', [w.startMs])) ??
+                'SELECT points FROM trips WHERE id = ? AND water_s IS NOT NULL', [w.startMs])) ??
             -1;
         final storedCatches = (await db.rawQuery('SELECT catches FROM trips WHERE id = ?', [w.startMs]))
             .first['catches'] as String;
@@ -292,11 +298,11 @@ class Repository {
     return keep;
   }
 
-  /// Fills in what a database upgrade added to the trips (their logged time),
+  /// Recomputes trips stored before the movement rule (schema version 3),
   /// once. Cheap when there's nothing to do.
   Future<void> upgradeTrips() async {
     final stale = Sqflite.firstIntValue(
-            await db.rawQuery('SELECT COUNT(*) FROM trips WHERE logged_s IS NULL')) ??
+            await db.rawQuery('SELECT COUNT(*) FROM trips WHERE water_s IS NULL')) ??
         0;
     if (stale == 0) return;
     await rebuildTrips();
@@ -307,8 +313,8 @@ class Repository {
         'id': id,
         'end_t': s.endMs,
         'distance_m': s.distanceM,
-        'moving_s': s.movingS,
-        'logged_s': s.loggedS,
+        'moving_s': 0,
+        'water_s': s.waterS,
         'max_speed': s.maxSpeedKmh,
         'points': s.pointCount,
         'catches': jsonEncode(s.catchesByAngler),
@@ -329,8 +335,7 @@ class Repository {
         startMs: r['id'] as int,
         endMs: r['end_t'] as int,
         distanceM: (r['distance_m'] as num).toDouble(),
-        movingS: r['moving_s'] as int,
-        loggedS: (r['logged_s'] as int?) ?? 0,
+        waterS: (r['water_s'] as int?) ?? 0,
         maxSpeedKmh: (r['max_speed'] as num?)?.toDouble(),
         pointCount: r['points'] as int,
         catchesByAngler: (jsonDecode(r['catches'] as String) as Map).cast<String, int>(),

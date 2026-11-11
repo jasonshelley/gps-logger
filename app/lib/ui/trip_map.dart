@@ -55,7 +55,7 @@ class TripMapState extends State<TripMap> {
 
   Map<String, dynamic> _routeGeoJson() {
     final features = <Map<String, dynamic>>[];
-    for (final seg in splitSegments(widget.data.points)) {
+    for (final seg in splitSegments(widget.data.track)) {
       // Runs of up to 8 legs with similar speed share one feature, which keeps
       // the feature count down while the replay can still reveal them smoothly.
       var run = <TrackPoint>[];
@@ -112,7 +112,7 @@ class TripMapState extends State<TripMap> {
       };
 
   Map<String, dynamic> _endsGeoJson() {
-    final pts = widget.data.points;
+    final pts = widget.data.track;
     if (pts.isEmpty) return const {'type': 'FeatureCollection', 'features': []};
     Map<String, dynamic> f(TrackPoint p, String kind) => {
           'type': 'Feature',
@@ -148,7 +148,7 @@ class TripMapState extends State<TripMap> {
 
   LatLngBounds? _bounds() {
     final b = widget.data.trip.stats.bounds ??
-        GeoBounds.of([for (final p in widget.data.points) (p.lat, p.lon)]);
+        GeoBounds.of([for (final p in widget.data.track) (p.lat, p.lon)]);
     if (b == null) return null;
     // Pad a single-point trip so the camera has something to fit.
     const e = 0.002;
@@ -300,7 +300,7 @@ class TripMapState extends State<TripMap> {
           await m.setLayerFilter('route-casing', shown);
           await m.setLayerFilter('catch-pin', shown);
           await m.setLayerFilter('catch-halo', shown);
-          final pos = positionAt(widget.data.points, t);
+          final pos = positionAt(widget.data.track, t);
           if (pos != null) await m.setGeoJsonSource('boat', _point(pos.$1, pos.$2));
         }
       }

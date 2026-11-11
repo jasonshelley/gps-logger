@@ -415,7 +415,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final cs = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     final now = _replayT ?? s.startMs;
-    final canReplay = d.points.length > 1 && s.endMs > s.startMs;
+    final canReplay = d.track.length > 1 && s.endMs > s.startMs;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
       child: Container(
@@ -489,7 +489,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final tiles = [
       StatTile(label: 'Duration', value: Fmt.duration(s.duration), icon: Icons.schedule_rounded),
       StatTile(label: 'Distance', value: Fmt.distance(s.distanceM), icon: Icons.route_rounded),
-      StatTile(label: 'Moving', value: Fmt.duration(Duration(seconds: s.movingS)), icon: Icons.directions_boat_rounded),
+      StatTile(label: 'On the water', value: Fmt.duration(s.onWater), icon: Icons.directions_boat_rounded),
       StatTile(label: 'Max speed', value: Fmt.speed(s.maxSpeedKmh), icon: Icons.speed_rounded),
       if (sun?.sunrise != null && sun?.sunset != null)
         StatTile(

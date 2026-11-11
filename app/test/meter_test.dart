@@ -3,9 +3,7 @@ import 'dart:typed_data';
 
 import 'package:catch_log/ble/protocol.dart';
 import 'package:catch_log/core/crc32.dart';
-import 'package:catch_log/core/log_csv.dart';
 import 'package:catch_log/core/meter.dart';
-import 'package:catch_log/core/trips.dart';
 import 'package:catch_log/data/database.dart';
 import 'package:catch_log/data/repository.dart';
 import 'package:catch_log/sync/logger_meter.dart';
@@ -50,14 +48,16 @@ void main() {
       expect(m.catchesByAngler, all.catchesByAngler);
     });
 
-    test('time on the water follows the logger\'s rule, not the trip span', () async {
+    test('distance and time follow the movement rule, not the trip span', () async {
       await import('gps20261108.csv');
       final trip = (await repo.trips()).single;
       final m = await repo.meter();
-      // The fixture has a 20-minute gap with the logger off: that gap is in
-      // the trip's span but isn't time on the water.
-      expect(m.onWater, lessThanOrEqualTo(trip.stats.duration - const Duration(minutes: 20)));
-      expect(m.onWater, greaterThan(trip.stats.duration - const Duration(minutes: 25)));
+      // python tools/metrics.py app/test/fixtures/gps20261108.csv
+      expect(m.distanceM.round(), 8406);
+      expect(m.onWater.inSeconds, 8555);
+      // The span includes a 20-minute gap with the logger off, and the stops
+      // before the first move and after the last.
+      expect(m.onWater, lessThan(trip.stats.duration - const Duration(minutes: 20)));
     });
 
     test('reset after everything reads zero', () async {
@@ -90,11 +90,10 @@ void main() {
       final m = await repo.meter();
       expect(m.trips, 1);
       expect(m.catchesByAngler, {'Jase': 3, 'Matt': 2});
-      expect(m.distanceM, greaterThan(0));
       expect(m.distanceM, lessThan(trip.stats.distanceM));
-      // The trip ends at 22:38, so at most 2 h 38 m since the reset.
-      expect(m.onWater, lessThanOrEqualTo(const Duration(hours: 2, minutes: 38)));
-      expect(m.onWater, greaterThan(const Duration(hours: 2)));
+      // meter_for([...gps20261108.csv], 2026-11-07T20:00:00Z) in tools/metrics.py.
+      expect(m.distanceM.round(), 4519);
+      expect(m.onWater.inSeconds, 2850);
     });
 
     test('totals include catches with no time; the meter can\'t place them', () async {
@@ -124,24 +123,6 @@ void main() {
       await repo.meterResetDelivered(second);
       expect(await repo.pendingMeterReset(), isNull);
       expect(await repo.meterResetAt(), second);
-    });
-  });
-
-  group('logged time', () {
-    TrackPoint pt(int s, double lat) =>
-        TrackPoint(time: DateTime.utc(2026, 11, 11).add(Duration(seconds: s)), lat: lat, lon: 151.2);
-
-    test('counts gaps of up to 15 minutes, not longer ones', () {
-      const g = 15 * 60;
-      final s = computeTripStats(
-          [pt(0, -33.8), pt(60, -33.8001), pt(60 + g, -33.8002), pt(60 + g + g + 1, -33.8003)], []);
-      expect(s.loggedS, 60 + g);
-    });
-
-    test('counts the time across a GPS glitch even though its distance is skipped', () {
-      final s = computeTripStats([pt(0, -33.8), pt(10, -33.0)], []); // about 89 km in 10 s
-      expect(s.distanceM, 0);
-      expect(s.loggedS, 10);
     });
   });
 
@@ -311,28 +292,49 @@ void main() {
     });
   });
 
-  test('a version 1 database is upgraded: settings added, trips given their logged time', () async {
-    await import('gps20261108.csv');
-    final before = (await repo.trips()).single.stats.loggedS;
-    expect(before, greaterThan(0));
-    // Turn it back into a version 1 database.
-    await repo.db.execute('DROP TABLE settings');
-    await repo.db.execute('ALTER TABLE trips DROP COLUMN logged_s');
-    await repo.db.setVersion(1);
+  Future<Repository> downgrade(int version, Future<void> Function(Database db) undo) async {
+    await undo(repo.db);
+    await repo.db.setVersion(version);
     await repo.db.close();
-
     final db = await openAppDatabase(factory: databaseFactoryFfi, path: '${tmp.path}/catch_log.db');
-    repo = Repository(db, logDir: Directory('${tmp.path}/logs'));
     expect(await db.getVersion(), schemaVersion);
-    expect((await repo.trips()).single.stats.loggedS, 0); // not filled in yet
+    return Repository(db, logDir: Directory('${tmp.path}/logs'));
+  }
+
+  test('a version 1 database is upgraded: settings added, trips recomputed', () async {
+    await import('gps20261108.csv');
+    final before = (await repo.trips()).single.stats;
+    expect(before.waterS, greaterThan(0));
+    repo = await downgrade(1, (db) async {
+      await db.execute('DROP TABLE settings');
+      await db.execute('ALTER TABLE trips DROP COLUMN water_s');
+    });
+    expect((await repo.trips()).single.stats.waterS, 0); // not filled in yet
     var notified = 0;
     repo.addListener(() => notified++);
     await repo.upgradeTrips();
-    expect((await repo.trips()).single.stats.loggedS, before);
+    expect((await repo.trips()).single.stats.waterS, before.waterS);
     expect(notified, 1);
     await repo.upgradeTrips(); // nothing left to do
     expect(notified, 1);
     await repo.resetMeter(at: DateTime.utc(2026, 11, 11));
     expect(await repo.meterResetAt(), DateTime.utc(2026, 11, 11));
+  });
+
+  test('a version 2 database is upgraded: old-rule distances replaced, the meter kept', () async {
+    await import('gps20261108.csv');
+    final want = (await repo.trips()).single.stats;
+    await repo.resetMeter(at: DateTime.utc(2026, 11, 7, 20));
+    repo = await downgrade(2, (db) async {
+      // What version 2 stored: no water_s, and a distance with jitter in it.
+      await db.execute('ALTER TABLE trips DROP COLUMN water_s');
+      await db.execute('ALTER TABLE trips ADD COLUMN logged_s INTEGER');
+      await db.execute('UPDATE trips SET logged_s = 9999, distance_m = distance_m + 3231');
+    });
+    await repo.upgradeTrips();
+    final got = (await repo.trips()).single.stats;
+    expect(got.distanceM, want.distanceM);
+    expect(got.waterS, want.waterS);
+    expect(await repo.meterResetAt(), DateTime.utc(2026, 11, 7, 20));
   });
 }
