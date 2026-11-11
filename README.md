@@ -204,7 +204,7 @@ To test a change locally before pushing, serve `web/` from the PC, for example w
 | `/gpsYYYYMMDD.csv` | Today's and earlier logs not yet transferred. Named by **Sydney local date** |
 | `/gpsnodate.csv` | Only if a catch was pressed before the GPS had ever given the date |
 | `/uploaded/` | Files the phone has confirmed |
-| `/trip.txt` | The trip meter's reset time (`reset_utc=<seconds>`), written when the app resets the meter. Kept by `rm *` |
+| `/trip.txt` | The trip meter's reset time (`reset_utc=<seconds>`), written when the app resets the meter or erases the logs. Kept by `rm *` |
 | `/readme.txt` | Optional. Printed to the console at boot, and kept by `rm *` |
 
 Each record goes in the file for its own local date, so a trip past midnight splits across two files. Times inside the file are UTC.
@@ -245,6 +245,7 @@ USB serial at 115200 baud. Type a command and press Enter. Lines over 96 charact
 | `tail <file> [n]` | Prints the last n lines (default 10) |
 | `rm <file>` | Deletes a file |
 | `rm *` | Deletes every file in `/` except `readme.txt` and `trip.txt`, after you type `yes` |
+| `erase-logs` | Deletes every log file in `/` and `/uploaded` and zeroes the trip meter, after you type `yes`. The same as the app's "reset all the data" (BLE `ERASE_LOGS`) |
 | `df` | Card size, used and free |
 
 File names without a leading `/` are in the root folder, for example `cat uploaded/gps20261111.csv`.

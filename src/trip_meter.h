@@ -48,6 +48,11 @@ enum class ResetResult { Applied, Unchanged, SaveFailed };
 // changes nothing. The caller must flush the log buffer first, so the rebuild sees every row.
 ResetResult reset(time_t t);
 
+// After the log files are erased: makes the meter count from 't' (0 if the
+// clock isn't set) and always rebuilds, even if 't' is unchanged. Returns
+// SaveFailed if /trip.txt couldn't be written; the meter is reset in memory anyway.
+ResetResult resetAfterErase(time_t t);
+
 const Meter& meter();
 
 }  // namespace trip

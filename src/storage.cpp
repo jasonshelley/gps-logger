@@ -3,6 +3,9 @@
 #include <SD.h>
 #include <SPI.h>
 
+#include <string>
+#include <vector>
+
 #include "config.h"
 
 namespace storage {
@@ -91,6 +94,33 @@ int listFiles(const char* dir, bool logOnly, const std::function<void(const char
   }
   root.close();
   return count;
+}
+
+bool eraseLogFiles(int& deleted, int& failed) {
+  deleted = failed = 0;
+  if (!s_mounted) return false;
+  const char* dirs[] = {"/", UPLOADED_DIR};
+  for (const char* dir : dirs) {
+    // Collect the names first: deleting while walking the folder isn't safe.
+    std::vector<std::string> names;
+    int n = listFiles(dir, true, [&](const char* name, size_t) { names.emplace_back(name); });
+    if (n < 0) {
+      if (strcmp(dir, "/") == 0) return false;
+      continue;  // no /uploaded yet
+    }
+    for (const std::string& name : names) {
+      char path[64];
+      snprintf(path, sizeof(path), "%s/%s", strcmp(dir, "/") == 0 ? "" : dir, name.c_str());
+      if (SD.remove(path)) {
+        deleted++;
+      } else {
+        failed++;
+        Serial.printf("[sd] couldn't delete %s\n", path);
+      }
+    }
+  }
+  Serial.printf("[sd] erased %d log file(s), %d failed\n", deleted, failed);
+  return true;
 }
 
 void absPath(const char* in, char* out, size_t len) {

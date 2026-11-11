@@ -29,6 +29,12 @@ int listFiles(const char* dir, bool logOnly, const std::function<void(const char
 // without the header line, and /<name> is removed.
 bool moveToUploaded(const char* name);
 
+// Deletes every log file (gps*.csv) in / and in /uploaded. Other files, such as
+// readme.txt and trip.txt, stay. Counts the files deleted and the ones that
+// couldn't be. Returns false if the root folder couldn't be read (a missing
+// /uploaded is fine).
+bool eraseLogFiles(int& deleted, int& failed);
+
 // Builds an absolute path: "x" -> "/x", "/x" -> "/x".
 void absPath(const char* in, char* out, size_t len);
 

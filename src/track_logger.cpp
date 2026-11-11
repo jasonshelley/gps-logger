@@ -350,6 +350,36 @@ void tick(uint32_t nowMs) {
   if (nowMs - s_lastFlushMs >= FLUSH_INTERVAL_MS) flush();
 }
 
+EraseResult eraseAllLogs() {
+  EraseResult r;
+  if (!storage::ensureMounted(millis())) return r;
+
+  // Nothing here flushes, so deleting the files before dropping the buffer is
+  // safe, and a card that can't be read leaves everything as it was.
+  r.cardOk = storage::eraseLogFiles(r.deleted, r.failed);
+  if (!r.cardOk) {
+    storage::markFailed();
+    return r;
+  }
+
+  // Drop what's buffered, so nothing erased is written straight back.
+  s_count = 0;
+  s_dropped = 0;
+  s_noDateJase = s_noDateMatt = 0;
+  s_noDateDay[0] = 0;
+  s_dayMove.clear();
+  bool known = s_stats.known;
+  char date[9];
+  snprintf(date, sizeof(date), "%s", s_stats.date);
+  s_stats = DayStats();
+  s_stats.known = known;
+  snprintf(s_stats.date, sizeof(s_stats.date), "%s", date);
+  s_needRebuild = false;
+
+  r.tripSaved = trip::resetAfterErase(clk::isSet() ? clk::now() : 0) == trip::ResetResult::Applied;
+  return r;
+}
+
 const DayStats& stats() { return s_stats; }
 uint32_t buffered() { return s_count; }
 uint32_t droppedRows() { return s_dropped; }

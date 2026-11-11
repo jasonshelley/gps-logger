@@ -16,6 +16,7 @@ static char s_line[CONSOLE_LINE_MAX + 1];
 static size_t s_len = 0;
 static bool s_overflow = false;
 static bool s_awaitConfirmRmAll = false;
+static bool s_awaitConfirmErase = false;
 
 static void printHelp() {
   Serial.println(
@@ -27,6 +28,7 @@ static void printHelp() {
       "  tail <file> [n]      print the last n lines (default 10)\n"
       "  rm <file>            delete a file\n"
       "  rm *                 delete every file in / except readme.txt and trip.txt (asks first)\n"
+      "  erase-logs           delete every log file in / and /uploaded and zero the trip meter (asks first)\n"
       "  df                   card size and free space\n"
       "Files without a leading / are in the root folder.");
 }
@@ -175,6 +177,18 @@ static void rmAll() {
   if (count == 64) Serial.println("Stopped at 64 files; run it again for the rest");
 }
 
+// The same erase as the app's ERASE_LOGS command.
+static void eraseLogs() {
+  tracklog::EraseResult r = tracklog::eraseAllLogs();
+  if (!r.cardOk) {
+    Serial.println("SD card not available; nothing erased");
+    return;
+  }
+  Serial.printf("Erased %d log file(s)%s", r.deleted, r.failed ? "" : "\n");
+  if (r.failed) Serial.printf(", %d couldn't be deleted\n", r.failed);
+  Serial.printf("Trip meter zeroed%s\n", r.tripSaved ? "" : ", but /trip.txt couldn't be written");
+}
+
 static void cmdDf() {
   if (!needCard()) return;
   uint64_t total = storage::totalBytes(), used = storage::usedBytes();
@@ -183,6 +197,12 @@ static void cmdDf() {
 }
 
 static void runLine(char* line) {
+  if (s_awaitConfirmErase) {
+    s_awaitConfirmErase = false;
+    if (strcmp(line, "yes") == 0) eraseLogs();
+    else Serial.println("Cancelled");
+    return;
+  }
   if (s_awaitConfirmRmAll) {
     s_awaitConfirmRmAll = false;
     if (strcmp(line, "yes") == 0) rmAll();
@@ -200,6 +220,11 @@ static void runLine(char* line) {
   else if (!strcmp(cmd, "status")) cmdStatus();
   else if (!strcmp(cmd, "ls")) cmdLs(tokens[1]);
   else if (!strcmp(cmd, "df")) cmdDf();
+  else if (!strcmp(cmd, "erase-logs")) {
+    if (!needCard()) return;
+    Serial.println("Delete every log file in / and /uploaded, and zero the trip meter? Type 'yes' to confirm:");
+    s_awaitConfirmErase = true;
+  }
   else if (!strcmp(cmd, "cat") && n >= 2) cmdCat(tokens[1]);
   else if (!strcmp(cmd, "tail") && n >= 2) cmdTail(tokens[1], n >= 3 ? atoi(tokens[2]) : 10);
   else if (!strcmp(cmd, "rm") && n >= 2) cmdRm(tokens[1]);

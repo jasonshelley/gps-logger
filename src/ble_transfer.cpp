@@ -19,8 +19,11 @@ static const char* kServiceUuid = "1f5f0001-56c8-49fb-9d0c-055269d0a2e3";
 static const char* kRxUuid = "1f5f0002-56c8-49fb-9d0c-055269d0a2e3";  // phone -> device (write)
 static const char* kTxUuid = "1f5f0003-56c8-49fb-9d0c-055269d0a2e3";  // device -> phone (notify)
 
-// v2 added METER and METER_RESET. v1 messages are unchanged.
-static const uint8_t kProtocolVersion = 2;
+// v2 added METER and METER_RESET; v3 added ERASE_LOGS. Earlier messages are unchanged.
+static const uint8_t kProtocolVersion = 3;
+
+// ERASE_LOGS must carry these four bytes, "ERAS", so a stray write can't erase anything.
+static const uint8_t kEraseMagic[4] = {'E', 'R', 'A', 'S'};
 
 enum : uint8_t {
   CMD_HELLO = 0x01,
@@ -30,6 +33,7 @@ enum : uint8_t {
   CMD_ABORT = 0x05,
   CMD_METER = 0x06,        // v2
   CMD_METER_RESET = 0x07,  // v2
+  CMD_ERASE_LOGS = 0x08,   // v3
 
   EVT_HELLO = 0x81,
   EVT_FILE = 0x82,
@@ -38,6 +42,7 @@ enum : uint8_t {
   EVT_END = 0x85,
   EVT_CONFIRMED = 0x86,
   EVT_METER = 0x87,        // v2
+  EVT_ERASED = 0x88,       // v3
   EVT_DATA = 0x90,
   EVT_ERROR = 0xEE,
 };
@@ -52,6 +57,7 @@ enum : uint8_t {
   ERR_CRC_MISMATCH = 7,
   ERR_MOVE_FAILED = 8,
   ERR_BAD_LENGTH = 9,
+  ERR_BAD_MAGIC = 10,      // v3: ERASE_LOGS without the right confirmation bytes
 };
 
 static const size_t kMaxCmd = 96;
@@ -315,6 +321,32 @@ static void handleMeterReset(const uint8_t* arg, size_t len) {
   sendMeter();
 }
 
+static void put16(uint8_t* p, int v) {
+  uint16_t u = v < 0 ? 0 : v > 0xFFFF ? 0xFFFF : (uint16_t)v;
+  p[0] = u & 0xFF;
+  p[1] = u >> 8;
+}
+
+// ERASE_LOGS "ERAS": deletes every log file, zeroes the trip meter.
+// Replies ERASED (deleted:u16, failed:u16, flags:u8), then METER.
+static void handleEraseLogs(const uint8_t* arg, size_t len) {
+  if (len < 4) return sendError(ERR_BAD_LENGTH, "ERASE_LOGS needs the 4-byte code");
+  if (memcmp(arg, kEraseMagic, 4) != 0) return sendError(ERR_BAD_MAGIC, "Wrong erase code; nothing erased");
+  if (s_status.sending) return sendError(ERR_BUSY, "Busy sending");
+  tracklog::EraseResult r = tracklog::eraseAllLogs();
+  if (!r.cardOk) return sendError(ERR_SD, "SD card not available; nothing erased");
+  s_doneName[0] = 0;
+  countFilesLeft();
+  snprintf(s_status.lastMsg, sizeof(s_status.lastMsg), "Erased %d log file(s)", r.deleted);
+  uint8_t buf[6];
+  buf[0] = EVT_ERASED;
+  put16(buf + 1, r.deleted);
+  put16(buf + 3, r.failed);
+  buf[5] = r.tripSaved ? 0 : 0x01;  // bit 0: /trip.txt couldn't be written
+  sendEvent(buf, sizeof(buf));
+  sendMeter();
+}
+
 static void handleCommand(const Cmd& c) {
   if (c.len == 0) return;
   const uint8_t* arg = c.data + 1;
@@ -334,6 +366,8 @@ static void handleCommand(const Cmd& c) {
       return sendMeter();
     case CMD_METER_RESET:
       return handleMeterReset(arg, argLen);
+    case CMD_ERASE_LOGS:
+      return handleEraseLogs(arg, argLen);
     case CMD_ABORT:
       if (s_status.sending) {
         closeTransfer();

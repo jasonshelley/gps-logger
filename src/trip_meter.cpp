@@ -181,6 +181,19 @@ ResetResult reset(time_t t) {
   return ResetResult::Applied;
 }
 
+ResetResult resetAfterErase(time_t t) {
+  if (t < 0) t = 0;
+  bool saved = saveResetTime(t);
+  s_meter.resetUtc = t;
+  rebuild();
+  Serial.printf("[trip] reset to %lld after erasing the logs%s\n", (long long)t, saved ? "" : " (not saved)");
+  if (!saved) {
+    storage::markFailed();
+    return ResetResult::SaveFailed;
+  }
+  return ResetResult::Applied;
+}
+
 const Meter& meter() { return s_meter; }
 
 }  // namespace trip

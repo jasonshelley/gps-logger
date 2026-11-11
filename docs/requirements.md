@@ -217,6 +217,7 @@ Where the rewrite had to settle something the decisions left open, or found that
 | B16 | Bluetooth security | No pairing. Anyone in range can list and download logs while the switch is on Transfer, and can confirm (move) a file if they send its correct CRC. That's acceptable for a fishing logger, and noted in the protocol doc. |
 
 | B17 | Trip meter (added after the rewrite) | Jason asked for a car-style trip meter that the app controls, so no new button. It counts catches per angler, distance and time on the water from a reset time the app sends over BLE (protocol v2, `METER_RESET`). It's stored in `/trip.txt` and rebuilt from the logs at boot. On the logger screen it replaces today's per-person catch counts and today's distance, which overrides that part of Q10. Today's points stay on the status line. Distance and "time on the water" follow the movement rule in `docs/metrics.md` (revised 2026-11-11). The first version summed every pair of consecutive points at most 15 min apart, and showed 3.2 km and 1 h 05 min for a logger left on a desk. Time on the water is now each segment's first move to its last, so time at anchor counts but a logger sitting still doesn't. Today's distance uses the same rule. The phone app must use it too. See `docs/ble-protocol.md`, `docs/metrics.md` and the README. |
+| B18 | Erasing the data (added 2026-11-11) | Jason: "I want to be able to reset all the data", wiping the logger's files as well as the app's. BLE protocol v3 adds `ERASE_LOGS`, guarded by the bytes `ERAS`: it deletes every `gps*.csv` in `/` and `/uploaded`, drops buffered rows, zeroes today's numbers and resets the trip meter to now (0 without GPS time). `readme.txt` stays. The app sends it only on a live connection after the user confirms. The console's `erase-logs` does the same. See `docs/ble-protocol.md`. |
 
 ### To check on the hardware
 
@@ -232,3 +233,5 @@ None of this has run on the board yet. On first power-up, check:
 8. A confirmed file moves to `/uploaded`, and a second transfer of the same day appends to it.
 9. Trip meter: a reset from the app writes `/trip.txt`, zeroes the screen's trip line (or recounts from the reset time), survives a restart, and a repeated reset with the same time changes nothing.
 10. Movement rule: after an hour on a desk in Logging mode, the trip distance and time on the water haven't moved. On the water, they go up while motoring and drifting, and time at anchor between moves counts.
+11. Erase: the app's "reset all the data" (or `erase-logs` on the console) leaves no `gps*.csv` in `/` or `/uploaded`, keeps `readme.txt`, shows zero catches and a zero trip, and logging writes a fresh file once back in Logging mode.
+

@@ -1,8 +1,8 @@
 # Bluetooth LE transfer protocol
 
-Version 2. The firmware side is in `src/ble_transfer.cpp`. The phone side is in `web/index.html` (file transfer only) and the Android app in `app/`.
+Version 3. The firmware side is in `src/ble_transfer.cpp`. The phone side is in `web/index.html` (file transfer only) and the Android app in `app/`.
 
-Version 2 adds the trip meter commands (METER, METER_RESET and the METER event). Every version 1 message is unchanged, so a version 1 client works with a version 2 logger. See [Version history](#version-history).
+Version 2 added the trip meter commands (METER, METER_RESET and the METER event). Version 3 adds ERASE_LOGS and the ERASED event. Every earlier message is unchanged, so an older client works with a newer logger. See [Version history](#version-history).
 
 The logger is a GATT server that advertises only in Transfer mode, as `GPS Logger`. One phone can connect at a time. There is no pairing or bonding, so anyone within range can connect while the switch is on Transfer.
 
@@ -33,12 +33,13 @@ Every message starts with a one-byte opcode. Integers are unsigned little-endian
 | `0x05` | ABORT | none | none. Stops the file being sent |
 | `0x06` | METER (v2) | none | METER |
 | `0x07` | METER_RESET (v2) | `reset:u32` (UTC seconds since 1970) | METER, or ERROR |
+| `0x08` | ERASE_LOGS (v3) | the 4 ASCII bytes `ERAS` (`45 52 41 53`) | ERASED then METER, or ERROR. See [Erasing the logs](#erasing-the-logs-v3) |
 
 ### Events (TX → phone)
 
 | Op | Name | Payload |
 |---|---|---|
-| `0x81` | HELLO | `version:u8` (2), `chunk:u16` (data bytes per DATA message at the current MTU) |
+| `0x81` | HELLO | `version:u8` (3), `chunk:u16` (data bytes per DATA message at the current MTU) |
 | `0x82` | FILE | `size:u32`, `name` |
 | `0x83` | LIST_END | `count:u16` |
 | `0x84` | BEGIN | `size:u32`, `name` |
@@ -46,6 +47,7 @@ Every message starts with a one-byte opcode. Integers are unsigned little-endian
 | `0x85` | END | `size:u32`, `crc:u32` |
 | `0x86` | CONFIRMED | `name` (now in `/uploaded`) |
 | `0x87` | METER (v2) | `reset:u32`, `jase:u16`, `matt:u16`, `distance_m:u32`, `water_s:u32`, `flags:u8`. 18 bytes. See [Trip meter](#trip-meter-v2) |
+| `0x88` | ERASED (v3) | `deleted:u16`, `failed:u16`, `flags:u8`. 6 bytes. See [Erasing the logs](#erasing-the-logs-v3) |
 | `0xEE` | ERROR | `code:u8`, then a short ASCII message |
 
 ### Error codes
@@ -56,11 +58,12 @@ Every message starts with a one-byte opcode. Integers are unsigned little-endian
 | 2 | Bad file name: not `gps*.csv`, or contains a path, `..` or a non-printable character |
 | 3 | File not found |
 | 4 | Busy: a file is being sent. Only ABORT, METER and CONFIRM for a different file are accepted |
-| 5 | SD card not available, or the trip reset couldn't be saved to it |
+| 5 | SD card not available, or the trip reset couldn't be saved to it. After ERASE_LOGS it means nothing was erased |
 | 6 | Read error while sending, or while checking the CRC |
 | 7 | The CRC in CONFIRM doesn't match the file on the card, so the file is kept |
 | 8 | Moving the file to `/uploaded` failed, so the file is kept |
 | 9 | Message too short |
+| 10 | ERASE_LOGS without the bytes `ERAS` (v3). Nothing was erased |
 
 ## Which files
 
@@ -180,6 +183,50 @@ sequenceDiagram
     L-->>A: METER reset=1794384000 (unchanged)
 ```
 
+## Erasing the logs (v3)
+
+`ERASE_LOGS` wipes the logger's data, for the app's "reset all the data". The app sends it only during a live connection, after the user has confirmed, and never queues it.
+
+Command, 5 bytes:
+
+```
+08 45 52 41 53        ERASE_LOGS "ERAS"
+```
+
+The four bytes after the opcode must be the ASCII `ERAS` (as a u32 little-endian that's `0x53415245`). Anything else gets ERROR 10 and nothing is erased; fewer than 4 bytes get ERROR 9. That way a stray or corrupted write can't erase anything.
+
+The logger then:
+
+1. Drops the rows still in its RAM buffer and zeroes today's numbers, so nothing erased is written back afterwards.
+2. Deletes every log file, `gps*.csv` (including `gpsnodate.csv`), in the root folder and in `/uploaded`. Other files stay: `readme.txt` and anything else that isn't a log. `/trip.txt` is rewritten in the next step.
+3. Resets the trip meter to the logger's current UTC time if it has had GPS time since boot, or to 0 if not. 0 means "count every log", which is zero now that there are none. `/trip.txt` is written with the new time.
+4. Rebuilds the meter, so it reads zero, and replies:
+
+ERASED, 6 bytes:
+
+| Offset | Field | Type | Notes |
+|---|---|---|---|
+| 0 | op | u8 | `0x88` |
+| 1 | `deleted` | u16 | Log files deleted (stops at 65535) |
+| 3 | `failed` | u16 | Log files that couldn't be deleted. They're still on the card, and listed by the next LIST |
+| 5 | `flags` | u8 | bit 0: `/trip.txt` couldn't be written. The meter is zero now, but after a restart it would count from the old reset time; with the logs gone, that's still zero unless some files failed. Other bits are 0 |
+
+Then the METER event with the new reset time and zero counts (`flags` bit 1 is set if the logger has no GPS time).
+
+- **Idempotent.** Erasing an empty card replies `ERASED 0 0` and a zero METER. With GPS time, each erase moves the reset time to now, which still reads zero.
+- While a file is being sent, it gets ERROR 4 (busy). If the card isn't available, ERROR 5, and nothing is erased or reset.
+- Logging carries on normally afterwards. Nothing logs in Transfer mode anyway, so the first new rows come when the switch goes back to Logging.
+- The logger screen shows zero catches and a zero trip straight away, and the transfer screen shows no files left.
+
+Example: 4 files erased, none failed, then the meter reset to 2026-11-11 08:00:00 UTC with no flags:
+
+```
+88 04 00 00 00 00
+87 80 20 f4 6a 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+The console has the same erase for bench use: `erase-logs`, then `yes`.
+
 ## Version history
 
 | Version | Change |
@@ -187,6 +234,7 @@ sequenceDiagram
 | 1 | File transfer: HELLO, LIST, GET, CONFIRM, ABORT |
 | 2 | Trip meter: METER (`0x06`), METER_RESET (`0x07`), METER event (`0x87`). Nothing in v1 changed. A client can check `version >= 2` in HELLO before using the meter, since a v1 logger answers METER with ERROR 1 (unknown command) |
 | 2 (revised) | `distance_m` and `water_s` now follow the movement rule in [metrics.md](metrics.md) instead of summing every pair of consecutive points, which counted GPS jitter. The message formats didn't change, so the version number didn't either. A logger with the earlier firmware reports the larger, jitter-inflated figures |
+| 3 | ERASE_LOGS (`0x08`) and the ERASED event (`0x88`), and error 10. Nothing in v1 or v2 changed. Check `version >= 3` in HELLO before sending ERASE_LOGS: a v2 logger answers it with ERROR 1 (unknown command) |
 
 ## Flow control
 

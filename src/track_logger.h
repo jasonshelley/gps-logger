@@ -39,6 +39,18 @@ bool flush();
 // Periodic work: 10 s flush, day rollover, rebuilding stats once the clock is set.
 void tick(uint32_t nowMs);
 
+struct EraseResult {
+  bool cardOk = false;     // false: the card wasn't available and nothing was erased
+  int deleted = 0;         // log files deleted
+  int failed = 0;          // log files that couldn't be deleted
+  bool tripSaved = false;  // /trip.txt holds the new reset time
+};
+
+// Erases every log file (gps*.csv in / and /uploaded), drops the rows still
+// buffered, zeroes today's numbers, and resets the trip meter to now (or to 0
+// if the clock isn't set). readme.txt stays. Logging carries on afterwards.
+EraseResult eraseAllLogs();
+
 const DayStats& stats();
 uint32_t buffered();
 uint32_t droppedRows();
