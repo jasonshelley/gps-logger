@@ -246,7 +246,8 @@ async function connect() {
     const hello = waitFor(e => e.op === EVT.HELLO, 5000, "HELLO");
     await sendCmd(CMD.HELLO);
     const h = await hello;
-    if (h.version !== PROTOCOL_VERSION) log("Logger protocol v" + h.version + ", page expects v" + PROTOCOL_VERSION, "warn");
+    // Later versions only add messages, so any version from 1 up works for this page.
+    if (h.version < PROTOCOL_VERSION) log("Logger protocol v" + h.version + ", page needs v" + PROTOCOL_VERSION + " or later", "warn");
     log("Connected to " + (device.name || "logger") + ", " + h.chunk + "-byte chunks", "ok");
     setState("Connected", "ok");
     busy = false;

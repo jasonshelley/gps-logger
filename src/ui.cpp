@@ -9,6 +9,7 @@
 #include "gps.h"
 #include "st7789.h"
 #include "storage.h"
+#include "trip_meter.h"
 
 namespace ui {
 
@@ -29,7 +30,7 @@ static lv_obj_t* s_timeLabel;
 static lv_obj_t* s_zoneLabel;
 static lv_obj_t* s_jaseLabel;
 static lv_obj_t* s_mattLabel;
-static lv_obj_t* s_distanceLabel;
+static lv_obj_t* s_tripLabel;  // trip distance and time on the water
 static lv_obj_t* s_statusLabel;
 static lv_obj_t* s_banner;
 static lv_obj_t* s_bannerLabel;
@@ -147,7 +148,7 @@ static void buildLogger() {
   makeSeparator(s_loggerBox, 222);
   s_jaseLabel = makeLabel(s_loggerBox, &lv_font_montserrat_20, LV_ALIGN_TOP_MID, -38, 228, "Jase 0");
   s_mattLabel = makeLabel(s_loggerBox, &lv_font_montserrat_20, LV_ALIGN_TOP_MID, 38, 228, "Matt 0");
-  s_distanceLabel = makeLabel(s_loggerBox, &lv_font_montserrat_14, LV_ALIGN_TOP_MID, 0, 256);
+  s_tripLabel = makeLabel(s_loggerBox, &lv_font_montserrat_14, LV_ALIGN_TOP_MID, 0, 256);
   s_statusLabel = makeLabel(s_loggerBox, &lv_font_montserrat_12, LV_ALIGN_TOP_MID, 0, 280);
 
   // Catch banner, hidden until a button is pressed.
@@ -274,16 +275,22 @@ static void refreshFast(uint32_t nowMs) {
     setText(s_zoneLabel, "");
   }
 
-  const DayStats& st = tracklog::stats();
-  snprintf(buf, sizeof(buf), "Jase %lu", (unsigned long)st.jase);
+  // Trip meter: catches, distance and time on the water since the app last reset it.
+  const trip::Meter& tm = trip::meter();
+  snprintf(buf, sizeof(buf), "Jase %lu", (unsigned long)tm.jase);
   setText(s_jaseLabel, buf);
-  snprintf(buf, sizeof(buf), "Matt %lu", (unsigned long)st.matt);
+  snprintf(buf, sizeof(buf), "Matt %lu", (unsigned long)tm.matt);
   setText(s_mattLabel, buf);
 
-  if (!st.known) snprintf(buf, sizeof(buf), "Today --");
-  else if (st.distanceM < 1000) snprintf(buf, sizeof(buf), "Today %.0f m", st.distanceM);
-  else snprintf(buf, sizeof(buf), "Today %.2f km", st.distanceM / 1000.0);
-  setText(s_distanceLabel, buf);
+  unsigned long mins = tm.waterS / 60;
+  char dist[16];
+  if (tm.distanceM < 1000) snprintf(dist, sizeof(dist), "%.0f m", tm.distanceM);
+  else if (tm.distanceM < 100000) snprintf(dist, sizeof(dist), "%.1f km", tm.distanceM / 1000.0);
+  else snprintf(dist, sizeof(dist), "%.0f km", tm.distanceM / 1000.0);
+  snprintf(buf, sizeof(buf), "Trip %s  %lu:%02lu%s", dist, mins / 60, mins % 60, tm.complete ? "" : " ?");
+  setText(s_tripLabel, buf);
+
+  const DayStats& st = tracklog::stats();
 
   const char* state;
   lv_palette_t colour;

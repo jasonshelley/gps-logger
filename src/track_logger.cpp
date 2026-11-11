@@ -5,7 +5,9 @@
 
 #include "clock.h"
 #include "config.h"
+#include "log_reader.h"
 #include "storage.h"
+#include "trip_meter.h"
 
 namespace tracklog {
 
@@ -37,6 +39,7 @@ static char s_noDateDay[9] = "";
 static bool s_haveLast = false;
 static bool s_lastInSession = false;  // false when seeded from the card at boot
 static double s_lastLat = 0, s_lastLng = 0;
+static time_t s_lastUtc = 0;
 static uint32_t s_lastMs = 0;
 
 const char* anglerName(Angler a) { return a == Angler::Jase ? "Jase" : "Matt"; }
@@ -161,77 +164,42 @@ bool flush() {
 
 // ---- Rebuilding today's numbers from the card ----
 
-// Splits a CSV line in place. Returns the number of fields.
-static int splitCsv(char* line, char** fields, int maxFields) {
-  int n = 0;
-  fields[n++] = line;
-  for (char* p = line; *p && n < maxFields; p++) {
-    if (*p == ',') {
-      *p = 0;
-      fields[n++] = p + 1;
-    }
-  }
-  return n;
+// Distance counts between consecutive track points no more than SEGMENT_GAP_S
+// apart, the same rule as the trip meter and the GPX segments.
+static bool sameSegment(time_t prevUtc, time_t utc) {
+  return prevUtc != 0 && utc >= prevUtc && utc - prevUtc <= SEGMENT_GAP_S;
 }
 
 struct ScanState {
   bool havePrev;
   double prevLat, prevLng;
-  time_t lastUtc;
+  time_t prevUtc;
 };
 
-static void scanLine(char* line, ScanState& st) {
-  char* f[14];
-  int n = splitCsv(line, f, 14);
-  if (n < 14) return;
-  if (strcmp(f[0], "track") == 0) {
-    if (!*f[2] || !*f[3]) return;
-    double lat = atof(f[2]), lng = atof(f[3]);
-    s_stats.points++;
-    if (st.havePrev) s_stats.distanceM += TinyGPSPlus::distanceBetween(st.prevLat, st.prevLng, lat, lng);
-    st.havePrev = true;
-    st.prevLat = lat;
-    st.prevLng = lng;
-    st.lastUtc = clk::parseIsoUtc(f[1]);
-  } else if (strcmp(f[0], "catch") == 0) {
-    if (strncmp(f[13], "Jase", 4) == 0) s_stats.jase++;
-    if (strncmp(f[13], "Matt", 4) == 0) s_stats.matt++;
-  }
-}
-
-static void scanFile(const char* path, ScanState& st) {
-  File f = SD.open(path, FILE_READ);
-  if (!f) return;
-  char line[LOG_ROW_MAX];
-  size_t len = 0;
-  bool overlong = false;
-  uint8_t buf[512];
-  size_t n;
-  while ((n = f.read(buf, sizeof(buf))) > 0) {
-    for (size_t i = 0; i < n; i++) {
-      char c = (char)buf[i];
-      if (c == '\n') {
-        line[len] = 0;
-        if (len && line[len - 1] == '\r') line[len - 1] = 0;
-        if (!overlong) scanLine(line, st);
-        len = 0;
-        overlong = false;
-      } else if (len < sizeof(line) - 1) {
-        line[len++] = c;
-      } else {
-        overlong = true;
-      }
+static void scanDayFile(const char* path, ScanState& st) {
+  forEachLogRow(path, [&st](char** f) {
+    if (strcmp(f[COL_TYPE], "track") == 0) {
+      if (!*f[COL_LAT] || !*f[COL_LON]) return;
+      double lat = atof(f[COL_LAT]), lng = atof(f[COL_LON]);
+      time_t t = clk::parseIsoUtc(f[COL_TIME]);
+      s_stats.points++;
+      if (st.havePrev && sameSegment(st.prevUtc, t))
+        s_stats.distanceM += TinyGPSPlus::distanceBetween(st.prevLat, st.prevLng, lat, lng);
+      st.havePrev = true;
+      st.prevLat = lat;
+      st.prevLng = lng;
+      st.prevUtc = t;
+    } else if (strcmp(f[COL_TYPE], "catch") == 0) {
+      if (strncmp(f[COL_COMMENT], "Jase", 4) == 0) s_stats.jase++;
+      if (strncmp(f[COL_COMMENT], "Matt", 4) == 0) s_stats.matt++;
     }
-  }
-  f.close();
+  });
 }
 
 static void rebuild(const char* day) {
   s_stats = DayStats();
   snprintf(s_stats.date, sizeof(s_stats.date), "%s", day);
   s_stats.known = true;
-  s_haveLast = false;
-  s_lastInSession = false;
 
   if (!storage::mounted()) {
     s_needRebuild = true;  // try again once the card is back
@@ -241,21 +209,25 @@ static void rebuild(const char* day) {
     char path[48];
     // Earlier transfers today moved part of the day to /uploaded.
     snprintf(path, sizeof(path), UPLOADED_DIR "/gps%s.csv", day);
-    scanFile(path, st);
+    scanDayFile(path, st);
     fileFor(day, path, sizeof(path));
-    scanFile(path, st);
+    scanDayFile(path, st);
 
-    if (st.havePrev) {
+    // Continue from the card's last point unless this session has a newer one
+    // (at midnight the last point is still yesterday's, which is newer than nothing).
+    if (st.havePrev && (!s_haveLast || st.prevUtc > s_lastUtc)) {
       s_haveLast = true;
+      s_lastInSession = false;
       s_lastLat = st.prevLat;
       s_lastLng = st.prevLng;
+      s_lastUtc = st.prevUtc;
       // Seed the last good fix so a catch made before the first fix still has a position.
       if (!gpsrx::lastGoodFix().valid) {
         GoodFix g;
         g.valid = true;
         g.lat = st.prevLat;
         g.lng = st.prevLng;
-        g.utc = st.lastUtc;
+        g.utc = st.prevUtc;
         g.atMs = 0;
         gpsrx::setLastGoodFix(g);
       }
@@ -314,12 +286,14 @@ void onLocation(const GoodFix& fix, uint32_t nowMs) {
 
   if (strcmp(day, s_stats.date) == 0) {
     s_stats.points++;
-    if (s_haveLast) s_stats.distanceM += movedM;
+    if (s_haveLast && sameSegment(s_lastUtc, fix.utc)) s_stats.distanceM += movedM;
   }
+  trip::onTrackPoint(fix.utc, fix.lat, fix.lng);
   s_haveLast = true;
   s_lastInSession = true;
   s_lastLat = fix.lat;
   s_lastLng = fix.lng;
+  s_lastUtc = fix.utc;
   s_lastMs = nowMs;
 }
 
@@ -352,6 +326,7 @@ bool logCatch(Angler who, uint32_t nowMs) {
     if (who == Angler::Jase) { s_noDateJase++; s_stats.jase++; } else { s_noDateMatt++; s_stats.matt++; }
   }
   push(day, row);
+  trip::onCatch(who, nowUtc);
   Serial.printf("[log] %s (fix %s, age %ld s)\n", comment,
                 fresh ? "current" : (fix.valid ? "last good" : "none"), ageS);
   return flush();
@@ -364,6 +339,10 @@ void tick(uint32_t nowMs) {
     char day[9];
     snprintf(day, sizeof(day), "%s", s_stats.date);
     rebuild(day);
+  }
+  if (trip::needsRebuild() && storage::mounted()) {
+    flush();
+    trip::tick();
   }
   if (nowMs - s_lastFlushMs >= FLUSH_INTERVAL_MS) flush();
 }

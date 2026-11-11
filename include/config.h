@@ -50,6 +50,16 @@
 #define LOCK_TIMEOUT_MS           5000  // "has lock" = a good fix within this long
 #define GPS_COMMS_TIMEOUT_MS      1000  // "comms OK" = a byte from the GPS within this long
 
+// Two consecutive track points further apart than this are in separate track
+// segments (the logger was off or had no good fix in between). Distance and
+// time on the water aren't counted across the gap. The phone page splits GPX
+// segments at the same 15 minutes.
+#define SEGMENT_GAP_S             900
+
+// ---- Trip meter ----
+#define TRIP_FILE                 "/trip.txt"
+#define TRIP_TMP_FILE             "/trip.tmp"
+
 // ---- Writing to the card (Q5) ----
 #define FLUSH_INTERVAL_MS     10000     // buffered track points reach the card every 10 s
 #define LOG_BUFFER_ROWS       32        // flushes early if it fills

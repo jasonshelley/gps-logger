@@ -8,6 +8,7 @@
 #include "gps.h"
 #include "storage.h"
 #include "track_logger.h"
+#include "trip_meter.h"
 
 namespace console {
 
@@ -25,7 +26,7 @@ static void printHelp() {
       "  cat <file>           print a file\n"
       "  tail <file> [n]      print the last n lines (default 10)\n"
       "  rm <file>            delete a file\n"
-      "  rm *                 delete every file in / except readme.txt (asks first)\n"
+      "  rm *                 delete every file in / except readme.txt and trip.txt (asks first)\n"
       "  df                   card size and free space\n"
       "Files without a leading / are in the root folder.");
 }
@@ -62,6 +63,12 @@ static void cmdStatus() {
   if (st.known)
     Serial.printf("Today %s: %lu points, %.0f m, Jase %lu, Matt %lu\n", st.date, (unsigned long)st.points,
                   st.distanceM, (unsigned long)st.jase, (unsigned long)st.matt);
+  const trip::Meter& tm = trip::meter();
+  char since[24] = "the start";
+  if (tm.resetUtc) clk::formatIsoUtc(tm.resetUtc, since, sizeof(since));
+  Serial.printf("Trip since %s: Jase %lu, Matt %lu, %.0f m, %lu min on the water%s\n", since,
+                (unsigned long)tm.jase, (unsigned long)tm.matt, tm.distanceM, (unsigned long)(tm.waterS / 60),
+                tm.complete ? "" : " (incomplete: card not read)");
   Serial.printf("Uptime %lu s, free heap %lu bytes\n", (unsigned long)(now / 1000),
                 (unsigned long)ESP.getFreeHeap());
 }
@@ -140,7 +147,7 @@ static void cmdTail(const char* name, int lines) {
 static void cmdRm(const char* name) {
   if (!needCard()) return;
   if (strcmp(name, "*") == 0) {
-    Serial.println("Delete every file in / except readme.txt? Type 'yes' to confirm:");
+    Serial.println("Delete every file in / except readme.txt and trip.txt? Type 'yes' to confirm:");
     s_awaitConfirmRmAll = true;
     return;
   }
@@ -156,7 +163,9 @@ static void rmAll() {
   static char names[64][32];
   int count = 0;
   storage::listFiles("/", false, [&](const char* name, size_t) {
-    if (count < 64 && strcasecmp(name, "readme.txt") != 0) snprintf(names[count++], 32, "%s", name);
+    // trip.txt holds the trip meter's reset time; it's a setting, not a log.
+    if (count < 64 && strcasecmp(name, "readme.txt") != 0 && strcasecmp(name, "trip.txt") != 0)
+      snprintf(names[count++], 32, "%s", name);
   });
   for (int i = 0; i < count; i++) {
     char path[40];

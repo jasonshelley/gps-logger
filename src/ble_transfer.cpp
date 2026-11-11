@@ -6,8 +6,11 @@
 #include <freertos/queue.h>
 
 #include "config.h"
+#include "clock.h"
 #include "crc32.h"
 #include "storage.h"
+#include "track_logger.h"
+#include "trip_meter.h"
 
 namespace bletx {
 
@@ -16,7 +19,8 @@ static const char* kServiceUuid = "1f5f0001-56c8-49fb-9d0c-055269d0a2e3";
 static const char* kRxUuid = "1f5f0002-56c8-49fb-9d0c-055269d0a2e3";  // phone -> device (write)
 static const char* kTxUuid = "1f5f0003-56c8-49fb-9d0c-055269d0a2e3";  // device -> phone (notify)
 
-static const uint8_t kProtocolVersion = 1;
+// v2 added METER and METER_RESET. v1 messages are unchanged.
+static const uint8_t kProtocolVersion = 2;
 
 enum : uint8_t {
   CMD_HELLO = 0x01,
@@ -24,6 +28,8 @@ enum : uint8_t {
   CMD_GET = 0x03,
   CMD_CONFIRM = 0x04,
   CMD_ABORT = 0x05,
+  CMD_METER = 0x06,        // v2
+  CMD_METER_RESET = 0x07,  // v2
 
   EVT_HELLO = 0x81,
   EVT_FILE = 0x82,
@@ -31,6 +37,7 @@ enum : uint8_t {
   EVT_BEGIN = 0x84,
   EVT_END = 0x85,
   EVT_CONFIRMED = 0x86,
+  EVT_METER = 0x87,        // v2
   EVT_DATA = 0x90,
   EVT_ERROR = 0xEE,
 };
@@ -276,6 +283,38 @@ static void handleConfirm(const uint8_t* arg, size_t len) {
   sendEvent(buf, 1 + n);
 }
 
+// METER: reset:u32, jase:u16, matt:u16, distance_m:u32, water_s:u32, flags:u8
+static void sendMeter() {
+  const trip::Meter& m = trip::meter();
+  uint8_t buf[18];
+  buf[0] = EVT_METER;
+  put32(buf + 1, (uint32_t)m.resetUtc);
+  uint16_t j = m.jase > 0xFFFF ? 0xFFFF : (uint16_t)m.jase;
+  uint16_t t = m.matt > 0xFFFF ? 0xFFFF : (uint16_t)m.matt;
+  buf[5] = j & 0xFF;
+  buf[6] = j >> 8;
+  buf[7] = t & 0xFF;
+  buf[8] = t >> 8;
+  put32(buf + 9, (uint32_t)(m.distanceM + 0.5));
+  put32(buf + 13, m.waterS);
+  uint8_t flags = 0;
+  if (!m.complete) flags |= 0x01;   // card couldn't be read; the numbers may be short
+  if (!clk::isSet()) flags |= 0x02; // the logger hasn't had GPS time since boot
+  buf[17] = flags;
+  sendEvent(buf, sizeof(buf));
+}
+
+static void handleMeterReset(const uint8_t* arg, size_t len) {
+  if (len < 4) return sendError(ERR_BAD_LENGTH, "METER_RESET needs a u32 time");
+  if (s_status.sending) return sendError(ERR_BUSY, "Busy sending");
+  uint32_t t = get32(arg);
+  tracklog::flush();  // the rebuild reads the files, so they must hold every row
+  trip::ResetResult r = trip::reset((time_t)t);
+  if (r == trip::ResetResult::SaveFailed) return sendError(ERR_SD, "Couldn't save the trip reset");
+  if (r == trip::ResetResult::Applied) snprintf(s_status.lastMsg, sizeof(s_status.lastMsg), "Trip reset");
+  sendMeter();
+}
+
 static void handleCommand(const Cmd& c) {
   if (c.len == 0) return;
   const uint8_t* arg = c.data + 1;
@@ -291,6 +330,10 @@ static void handleCommand(const Cmd& c) {
       return handleGet(arg, argLen);
     case CMD_CONFIRM:
       return handleConfirm(arg, argLen);
+    case CMD_METER:
+      return sendMeter();
+    case CMD_METER_RESET:
+      return handleMeterReset(arg, argLen);
     case CMD_ABORT:
       if (s_status.sending) {
         closeTransfer();

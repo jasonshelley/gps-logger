@@ -13,6 +13,7 @@
 #include "st7789.h"
 #include "storage.h"
 #include "track_logger.h"
+#include "trip_meter.h"
 #include "ui.h"
 
 static Button s_jase(PIN_BTN_JASE, BUTTON_DEBOUNCE_MS);
@@ -57,6 +58,7 @@ void setup() {
   clk::begin();
   storage::begin();
   tracklog::begin();
+  trip::begin();  // reads /trip.txt and rebuilds the meter from the logs
   ui::begin(s_modeSwitch.mode());
   gpsrx::begin();
 
