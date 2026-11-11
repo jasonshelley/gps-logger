@@ -20,31 +20,49 @@ A handheld GPS logger on a Waveshare ESP32-C6-LCD-1.47. It records the boat's tr
 
 ### Wiring
 
+The board has two rows of header pins, one along each long side. Waveshare's schematic (`ESP32-C6-LCD-1.47_schemetics.pdf`) calls the header U2 and numbers it like a chip: pins 1–9 run down one side, and pins 10–18 run back up the other. So pin 1 is opposite pin 18, and pin 9 is opposite pin 10.
+
+The schematic doesn't show which end is nearest the USB-C port, or which face of the board it's drawn from. **Go by the pin labels printed on your board**, not by counting from an end.
+
+Everything except the two GPS data wires goes on the **IO0–IO5 / 5V / GND / 3V3 row**.
+
+| Row A (U2 pins 1–9) | Use | Opposite | Row B (U2 pins 18–10) | Use |
+|---|---|---|---|---|
+| 1 · BOOT (IO9) | – | ↔ | 18 · IO5 | – (SD MISO) |
+| 2 · IO18 | **GPS RX** (ESP TX) | ↔ | 17 · IO4 | – (SD CS) |
+| 3 · IO19 | **GPS TX** (ESP RX) | ↔ | 16 · IO3 | **Mode switch** |
+| 4 · IO20 | spare | ↔ | 15 · IO2 | **Matt button** |
+| 5 · IO23 | spare | ↔ | 14 · IO1 | **Jase button** |
+| 6 · USB_N | – | ↔ | 13 · IO0 | spare |
+| 7 · USB_P | – | ↔ | 12 · 3V3 | GPS power (if 3.3 V) |
+| 8 · RXD | spare | ↔ | 11 · GND | **Ground** |
+| 9 · TXD | spare | ↔ | 10 · 5V | GPS power (if 5 V) |
+
 All three inputs are active low: wire each between its GPIO and GND. The internal pull-ups are on, so no resistors are needed.
 
-| Function | GPIO | Header U2 pin | Connect to |
-|---|---|---|---|
-| Jase button | **1** | 14 (IO1) | button → GND |
-| Matt button | **2** | 15 (IO2) | button → GND |
-| Mode switch | **3** | 16 (IO3) | switch → GND. Closed = **Transfer**, open = **Logging** |
-| GPS TX → ESP RX | **19** | 3 (IO19) | GPS module TX |
-| ESP TX → GPS RX | **18** | 2 (IO18) | GPS module RX |
-| GPS power | – | 12 (3V3) or 10 (5V) | whichever the GPS module needs |
-| Ground | – | 11 (GND) | GPS GND, button and switch commons |
+| Function | GPIO | Row | Label | Connect to |
+|---|---|---|---|---|
+| Jase button | **1** | B | IO1 | button → GND |
+| Matt button | **2** | B | IO2 | button → GND |
+| Mode switch | **3** | B | IO3 | switch → GND. Closed = **Transfer**, open = **Logging** |
+| Ground | – | B | GND | GPS GND, and the common side of both buttons and the switch |
+| GPS power | – | B | 3V3 or 5V | whichever the GPS module needs |
+| GPS TX → ESP RX | **19** | A | IO19 | GPS module TX |
+| ESP TX → GPS RX | **18** | A | IO18 | GPS module RX |
 
-Header pin numbers are from Waveshare's schematic (`ESP32-C6-LCD-1.47_schemetics.pdf`). Header U2 is pins 1–18: BOOT(IO9), IO18, IO19, IO20, IO23, USB_N, USB_P, RXD, TXD, 5V, GND, 3V3, IO0, IO1, IO2, IO3, IO4, IO5. Check this against the silkscreen on your board before you solder.
+"Row A" and "Row B" are names used only in this README, not markings on the board.
 
 **Why GPIO 1, 2 and 3:** the schematic shows nothing else on them. They aren't strapping pins (on the ESP32-C6 those are 4, 5, 8, 9 and 15). GPIO 0 and 1 can take a 32 kHz crystal, but this board doesn't fit one, so GPIO 1 is free.
 
-**Don't use these:**
+**Don't use these GPIOs** (these are GPIO numbers, not header pin numbers):
 
-- 4 and 5: SD CS and MISO, which are also strapping pins. The old sketch had the buttons here.
-- 6, 7, 14, 15, 21, 22: the LCD.
-- 8: the RGB LED.
-- 9: BOOT.
-- 12 and 13: USB.
+- GPIO 4 and 5 (labels IO4, IO5): SD CS and MISO, which are also strapping pins. The old sketch had the buttons here.
+- GPIO 6, 7, 14, 15, 21, 22: the LCD. Not on the header.
+- GPIO 8: the RGB LED. Not on the header.
+- GPIO 9 (label BOOT): the BOOT button.
+- GPIO 12 and 13 (labels USB_N, USB_P): USB.
 
-IO0, IO20, IO23 and the UART0 TXD/RXD pads are spare.
+IO0, IO20, IO23 and the TXD/RXD pins are spare.
 
 ## Building
 
