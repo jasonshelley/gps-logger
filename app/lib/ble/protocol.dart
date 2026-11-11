@@ -10,8 +10,9 @@ const String rxCharUuid = '1f5f0002-56c8-49fb-9d0c-055269d0a2e3'; // phone -> lo
 const String txCharUuid = '1f5f0003-56c8-49fb-9d0c-055269d0a2e3'; // logger -> phone
 const String advertisedName = 'GPS Logger';
 /// The newest protocol version the app speaks. Older loggers still work:
-/// version 2 only added the trip meter, and nothing in version 1 changed.
-const int protocolVersion = 2;
+/// version 2 added the trip meter and version 3 ERASE_LOGS, and nothing
+/// earlier changed.
+const int protocolVersion = 3;
 
 /// The first version with the trip meter (METER, METER_RESET).
 const int meterProtocolVersion = 2;
@@ -24,6 +25,7 @@ abstract final class Cmd {
   static const abort = 0x05;
   static const meter = 0x06; // v2
   static const meterReset = 0x07; // v2: reset u32 (UTC seconds)
+  static const eraseLogs = 0x08; // v3: the 4 ASCII bytes "ERAS"
 }
 
 abstract final class Evt {
@@ -34,6 +36,7 @@ abstract final class Evt {
   static const end = 0x85;
   static const confirmed = 0x86;
   static const meter = 0x87; // v2
+  static const erased = 0x88; // v3
   static const data = 0x90;
   static const error = 0xEE;
 }
@@ -57,6 +60,10 @@ String describeLoggerError(int code, String text) {
       return 'The file changed on the logger, so it was kept there';
     case 8:
       return 'The logger couldn\'t move the file to /uploaded, so it was kept';
+    case 9:
+      return 'The logger got a message that was too short';
+    case 10:
+      return 'The logger refused the erase because the command arrived damaged. Nothing was erased';
     default:
       return text.isNotEmpty ? text : 'Logger error $code';
   }
@@ -68,6 +75,10 @@ Uint8List encodeHello() => Uint8List.fromList([Cmd.hello]);
 Uint8List encodeList() => Uint8List.fromList([Cmd.list]);
 Uint8List encodeAbort() => Uint8List.fromList([Cmd.abort]);
 Uint8List encodeMeter() => Uint8List.fromList([Cmd.meter]);
+
+/// ERASE_LOGS (v3), with the guard bytes "ERAS" so a stray or damaged write
+/// can't erase anything.
+Uint8List encodeEraseLogs() => Uint8List.fromList([Cmd.eraseLogs, ...ascii.encode('ERAS')]);
 
 /// METER_RESET: count from [resetUtcSeconds] (0 = count everything).
 Uint8List encodeMeterReset(int resetUtcSeconds) {
@@ -164,6 +175,22 @@ class MeterEvent extends LoggerEvent {
       resetUtcSeconds == 0 ? null : DateTime.fromMillisecondsSinceEpoch(resetUtcSeconds * 1000, isUtc: true);
 }
 
+/// The logger erased its log files (v3). A METER event at zero follows.
+class ErasedEvent extends LoggerEvent {
+  const ErasedEvent({required this.deleted, required this.failed, required this.flags});
+
+  /// Log files deleted.
+  final int deleted;
+
+  /// Log files that couldn't be deleted: still on the card, and in the next LIST.
+  final int failed;
+  final int flags;
+
+  /// `/trip.txt` couldn't be written: after a restart the logger would count
+  /// from its old reset time.
+  bool get resetNotSaved => flags & 0x01 != 0;
+}
+
 class ErrorEvent extends LoggerEvent {
   const ErrorEvent(this.code, this.text);
   final int code;
@@ -227,6 +254,10 @@ LoggerEvent decodeEvent(Uint8List b) {
         waterS: d.getUint32(13, Endian.little),
         flags: b[17],
       );
+    case Evt.erased:
+      need(6);
+      return ErasedEvent(
+          deleted: d.getUint16(1, Endian.little), failed: d.getUint16(3, Endian.little), flags: b[5]);
     case Evt.error:
       need(2);
       return ErrorEvent(b[1], _name(b, 2));

@@ -420,13 +420,22 @@ void main() {
         ],
       ]) {
         c.unsynced = files;
-        c.error = 'No logger found. Put its switch on Transfer, keep it close, and try again.';
-        c.result = const LoggerEraseResult(deletedFiles: 12);
+        c.error = 'The logger is busy sending another file. Nothing was erased.';
+        c.phoneResetAt = DateTime.utc(2026, 11, 11, 8);
+        const meter = MeterEvent(resetUtcSeconds: 1794384000, jase: 0, matt: 0, distanceM: 0, waterS: 0, flags: 0);
         for (final p in EraseLoggerPhase.values) {
+          c.result = const LoggerEraseResult(deletedFiles: 12, meter: meter);
+          c.remaining = [];
           c.show(p);
           await tester.pump(const Duration(milliseconds: 300));
           expect(_overflows(tester), isEmpty, reason: '${p.name}, ${files.length} files');
         }
+        // Done, but some files wouldn't delete and /trip.txt wasn't saved.
+        c.result = const LoggerEraseResult(deletedFiles: 9, failedFiles: 3, resetNotSaved: true, meter: meter);
+        c.remaining = files.take(2).toList();
+        c.show(EraseLoggerPhase.done);
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(_overflows(tester), isEmpty, reason: 'partly erased, ${files.length} files');
       }
       await tester.pumpWidget(const SizedBox());
     });

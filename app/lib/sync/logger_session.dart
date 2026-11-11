@@ -18,9 +18,12 @@ abstract class LoggerTransport {
 }
 
 class TransferException implements Exception {
-  TransferException(this.message, {this.retryable = true});
+  TransferException(this.message, {this.retryable = true, this.loggerError});
   final String message;
   final bool retryable;
+
+  /// The logger's ERROR code, when the logger refused the command.
+  final int? loggerError;
   @override
   String toString() => message;
 }
@@ -193,7 +196,7 @@ class LoggerSession {
   }
 
   static Never _throwError(ErrorEvent e) =>
-      throw TransferException(e.message, retryable: e.code == 4 || e.code == 6);
+      throw TransferException(e.message, retryable: e.code == 4 || e.code == 6, loggerError: e.code);
 
   Future<HelloEvent> hello() async {
     final h = await _request(encodeHello(), (e) => e is HelloEvent || e is ErrorEvent,
@@ -274,6 +277,25 @@ class LoggerSession {
       (e) => e is MeterEvent || e is ErrorEvent,
       const Duration(seconds: 30),
       'the logger to reset its trip meter') as MeterEvent;
+
+  /// Erases the logger's log files (protocol v3), then reads the meter it
+  /// sends at zero. Deleting files on the card can take a while.
+  Future<(ErasedEvent, MeterEvent)> eraseLogs() async {
+    const wait = Duration(seconds: 60);
+    // The METER comes straight after ERASED: listen for it before sending.
+    final meterW = _waitFor((e) => e is MeterEvent, wait, 'the trip meter after erasing');
+    final ErasedEvent erased;
+    try {
+      erased = await _request(encodeEraseLogs(), (e) => e is ErasedEvent || e is ErrorEvent, wait,
+          'the logger to erase its files') as ErasedEvent;
+    } catch (_) {
+      meterW.timer?.cancel();
+      _waiters.remove(meterW);
+      rethrow;
+    }
+    final meter = await meterW.completer.future as MeterEvent;
+    return (erased, meter);
+  }
 
   void dispose() {
     _sub.cancel();

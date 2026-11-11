@@ -28,6 +28,14 @@ class FakeLogger implements LoggerTransport {
   /// Answer METER_RESET with this reset time instead of the one sent.
   int? meterResetAnswer;
 
+  /// ERASE_LOGS (v3): files that refuse to be deleted, an error code to
+  /// answer with instead (4 busy, 5 no card), and the logger's clock (UTC
+  /// seconds, 0 = no GPS time) that becomes the meter's reset.
+  Set<String> undeletable = {};
+  int? eraseError;
+  int clockUtc = 1794384000;
+  int erasedFlags = 0;
+
   /// Fault injection.
   int? dropChunkAt; // skip the DATA message at this offset
   int? corruptByteAt; // flip a byte in the data sent (CRC in END stays right)
@@ -69,7 +77,8 @@ class FakeLogger implements LoggerTransport {
     final op = data[0];
     sent.add(op);
     final name = op == Cmd.get || op == Cmd.confirm ? ascii.decode(data.sublist(op == Cmd.confirm ? 5 : 1)) : '';
-    if (version < meterProtocolVersion && (op == Cmd.meter || op == Cmd.meterReset)) {
+    if (version < meterProtocolVersion && (op == Cmd.meter || op == Cmd.meterReset) ||
+        version < 3 && op == Cmd.eraseLogs) {
       _emit([Evt.error, 1, ...ascii.encode('unknown command')]);
       return;
     }
@@ -125,6 +134,31 @@ class FakeLogger implements LoggerTransport {
         } else {
           uploaded[name] = files.remove(name)!;
           _emit([Evt.confirmed, ...ascii.encode(name)]);
+        }
+      case Cmd.eraseLogs:
+        if (data.length < 5) {
+          _emit([Evt.error, 9, ...ascii.encode('short')]);
+        } else if (ascii.decode(data.sublist(1, 5), allowInvalid: true) != 'ERAS') {
+          _emit([Evt.error, 10, ...ascii.encode('bad magic')]);
+        } else if (eraseError != null) {
+          _emit([Evt.error, eraseError!, ...ascii.encode('no')]);
+        } else {
+          var deleted = 0, failed = 0;
+          for (final folder in [files, uploaded]) {
+            for (final n in folder.keys.toList()) {
+              if (undeletable.contains(n)) {
+                failed++;
+              } else {
+                folder.remove(n);
+                deleted++;
+              }
+            }
+          }
+          meterReset = clockUtc;
+          jase = matt = distanceM = waterS = 0;
+          meterFlags = clockUtc == 0 ? 2 : 0;
+          _emit([Evt.erased, ..._u16(deleted), ..._u16(failed), erasedFlags]);
+          _emitMeter();
         }
       case Cmd.abort:
         break;

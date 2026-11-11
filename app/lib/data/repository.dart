@@ -461,6 +461,20 @@ class Repository {
     _notify();
   }
 
+  /// After the logger erased its files: its trip meter counts from [at] (its
+  /// clock), which becomes the phone's too, replacing any queued reset. If
+  /// the logger had no GPS time ([at] is null), the phone counts from now and
+  /// tells the logger at the next sync.
+  Future<DateTime> meterResetByLogger(DateTime? at) async {
+    if (at == null) return resetMeter();
+    await db.transaction((txn) async {
+      await _setSetting(txn, _meterResetKey, '${at.millisecondsSinceEpoch}');
+      await _setSetting(txn, _meterPendingKey, null);
+    });
+    _notify();
+    return at;
+  }
+
   /// Called once the logger has accepted the reset sent at [sent]. A newer
   /// reset made in the meantime stays queued.
   Future<void> meterResetDelivered(DateTime sent) async {

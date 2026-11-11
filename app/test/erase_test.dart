@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:catch_log/ble/protocol.dart';
 import 'package:catch_log/core/crc32.dart';
@@ -11,7 +12,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'support/fake_logger.dart';
 
-/// A pretend ERASE_LOGS, until the protocol v3 bytes are specified.
+const _zero = MeterEvent(resetUtcSeconds: 1794384000, jase: 0, matt: 0, distanceM: 0, waterS: 0, flags: 0);
+
+/// A stand-in eraser, for the controller's own logic.
 class _FakeEraser extends LoggerEraser {
   _FakeEraser({this.fail});
   final String? fail;
@@ -24,7 +27,7 @@ class _FakeEraser extends LoggerEraser {
   Future<LoggerEraseResult> erase(LoggerSession session) async {
     calls++;
     if (fail != null) throw TransferException(fail!);
-    return const LoggerEraseResult(deletedFiles: 7);
+    return const LoggerEraseResult(deletedFiles: 7, meter: _zero);
   }
 }
 
@@ -155,7 +158,8 @@ void main() {
 
     test('a version 2 logger is told to update its firmware, and nothing is sent', () async {
       final eraser = _FakeEraser();
-      final c = EraseLoggerController(eraser: eraser, connect: connectTo(FakeLogger({'gps20261111.csv': [1, 2]})));
+      final c = EraseLoggerController(
+          eraser: eraser, connect: connectTo(FakeLogger({'gps20261111.csv': [1, 2]}, version: 2)));
       await c.start();
       expect(c.phase, EraseLoggerPhase.needsFirmware);
       expect(c.version, 2);
@@ -205,16 +209,84 @@ void main() {
       expect(c.error, startsWith('No logger found'));
     });
 
-    test('the real eraser sends nothing until the v3 message is specified', () async {
-      const ble = BleLoggerEraser();
-      expect(ble.supportedBy(const HelloEvent(2, 239)), isFalse);
-      expect(ble.supportedBy(const HelloEvent(3, 239)), isTrue);
-      final c = EraseLoggerController(eraser: ble, connect: connectTo(FakeLogger({}, version: 3)));
-      await c.start();
-      await c.erase();
-      expect(c.phase, EraseLoggerPhase.failed);
-      expect(c.error, contains('Update the app'));
-      expect(logger.sent, [Cmd.hello, Cmd.list]);
+    test('ERASE_LOGS and ERASED match the example in docs/ble-protocol.md', () {
+      expect(encodeEraseLogs(), [0x08, 0x45, 0x52, 0x41, 0x53]);
+      final e = decodeEvent(Uint8List.fromList([0x88, 0x04, 0x00, 0x00, 0x00, 0x00])) as ErasedEvent;
+      expect((e.deleted, e.failed, e.resetNotSaved), (4, 0, false));
+      final f = decodeEvent(Uint8List.fromList([0x88, 0x01, 0x01, 0x02, 0x00, 0x01])) as ErasedEvent;
+      expect((f.deleted, f.failed, f.resetNotSaved), (257, 2, true));
+      final m = decodeEvent(Uint8List.fromList(
+          [0x87, 0x80, 0x20, 0xf4, 0x6a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])) as MeterEvent;
+      expect(m.resetAt, DateTime.utc(2026, 11, 11, 8));
+      expect(() => decodeEvent(Uint8List.fromList([0x88, 1, 0, 0])), throwsA(isA<ProtocolException>()));
+      expect(describeLoggerError(10, ''), contains('Nothing was erased'));
+    });
+
+    group('over the real command, against the fake logger', () {
+      test('erases the root and /uploaded logs, and the phone\'s meter takes the logger\'s reset', () async {
+        await repo.resetMeter(at: DateTime.utc(2026, 11, 10)); // queued, now overtaken
+        final fake = FakeLogger({'gps20261111.csv': List.filled(50, 65)}, version: 3)
+          ..uploaded['gps20261110.csv'] = Uint8List(10)
+          ..clockUtc = 1794384000;
+        final c = EraseLoggerController(connect: connectTo(fake), onMeterReset: repo.meterResetByLogger);
+        await c.start();
+        expect(c.unsynced.single.name, 'gps20261111.csv');
+        await c.erase();
+        expect(c.phase, EraseLoggerPhase.done, reason: c.error);
+        expect(c.result!.deletedFiles, 2);
+        expect(c.result!.failedFiles, 0);
+        expect(c.remaining, isEmpty);
+        expect(fake.files, isEmpty);
+        expect(fake.uploaded, isEmpty);
+        expect(fake.sent, [Cmd.hello, Cmd.list, Cmd.eraseLogs]);
+        final at = DateTime.utc(2026, 11, 11, 8);
+        expect(c.result!.meter.resetAt, at);
+        expect(c.phoneResetAt, at);
+        expect(await repo.meterResetAt(), at);
+        expect(await repo.pendingMeterReset(), isNull); // the logger already has it
+      });
+
+      test('files that couldn\'t be deleted are reported, with the next LIST', () async {
+        final fake = FakeLogger({'gps20261111.csv': [65], 'gpsnodate.csv': [65]}, version: 3)
+          ..uploaded['gps20261109.csv'] = Uint8List(3)
+          ..undeletable = {'gps20261111.csv', 'gps20261109.csv'}
+          ..erasedFlags = 1;
+        final c = EraseLoggerController(connect: connectTo(fake), onMeterReset: repo.meterResetByLogger);
+        await c.start();
+        await c.erase();
+        expect(c.phase, EraseLoggerPhase.done);
+        expect((c.result!.deletedFiles, c.result!.failedFiles, c.result!.resetNotSaved), (1, 2, true));
+        // LIST shows the root folder only, so the /uploaded one isn't named.
+        expect(c.remaining.map((f) => f.name), ['gps20261111.csv']);
+        expect(fake.sent, [Cmd.hello, Cmd.list, Cmd.eraseLogs, Cmd.list]);
+      });
+
+      test('a logger with no GPS time resets to 0; the phone counts from now and tells it next sync', () async {
+        final fake = FakeLogger({}, version: 3)..clockUtc = 0;
+        final c = EraseLoggerController(connect: connectTo(fake), onMeterReset: repo.meterResetByLogger);
+        final before = DateTime.now().subtract(const Duration(seconds: 1));
+        await c.start();
+        await c.erase();
+        expect(c.result!.meter.resetAt, isNull);
+        expect(c.result!.meter.clockNotSet, isTrue);
+        expect(c.phoneResetAt!.isAfter(before), isTrue);
+        expect(await repo.pendingMeterReset(), c.phoneResetAt);
+      });
+
+      test('busy or no card: nothing is erased, and the phone\'s meter is left alone', () async {
+        for (final code in [4, 5]) {
+          final reset = await repo.resetMeter(at: DateTime.utc(2026, 11, 10));
+          final fake = FakeLogger({'gps20261111.csv': [65]}, version: 3)..eraseError = code;
+          final c = EraseLoggerController(connect: connectTo(fake), onMeterReset: repo.meterResetByLogger);
+          await c.start();
+          await c.erase();
+          expect(c.phase, EraseLoggerPhase.failed);
+          expect(c.error, endsWith('Nothing was erased.'));
+          expect(fake.files, hasLength(1));
+          expect(await repo.meterResetAt(), reset);
+          expect(await repo.pendingMeterReset(), reset);
+        }
+      });
     });
   });
 }

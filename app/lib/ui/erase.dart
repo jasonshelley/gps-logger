@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../sync/logger_eraser.dart';
 import 'format.dart';
 import 'widgets.dart';
@@ -117,11 +118,16 @@ class EraseLoggerScreen extends StatefulWidget {
 }
 
 class _EraseLoggerScreenState extends State<EraseLoggerScreen> {
-  late final EraseLoggerController _c = widget.controller ?? EraseLoggerController();
+  late final EraseLoggerController _c;
+  bool _made = false;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_made) return;
+    _made = true;
+    final repo = AppScope.of(context).repo;
+    _c = widget.controller ?? EraseLoggerController(onMeterReset: repo.meterResetByLogger);
     if (widget.controller == null) _c.start();
   }
 
@@ -196,13 +202,7 @@ class _EraseLoggerScreenState extends State<EraseLoggerScreen> {
       case EraseLoggerPhase.confirm:
         return _Confirm(controller: _c);
       case EraseLoggerPhase.done:
-        final n = _c.result?.deletedFiles ?? 0;
-        return MessageView(
-          icon: Icons.check_rounded,
-          title: 'Logger erased',
-          body: 'It deleted $n log ${n == 1 ? 'file' : 'files'} and its trip meter is back to zero.',
-          actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
-        );
+        return _Done(controller: _c);
       case EraseLoggerPhase.failed:
         return MessageView(
           icon: Icons.error_outline_rounded,
@@ -284,6 +284,96 @@ class _Confirm extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         OutlinedButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+      ]),
+    );
+  }
+}
+
+class _Done extends StatelessWidget {
+  const _Done({required this.controller});
+  final EraseLoggerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final r = controller.result;
+    final n = r?.deletedFiles ?? 0;
+    final failed = r?.failedFiles ?? 0;
+    final since = controller.phoneResetAt;
+    final notes = <String>[
+      if (r?.resetNotSaved == true)
+        'The logger couldn\'t save its new meter start to the card. If it restarts before the next sync, '
+            'its meter may count from the old time.',
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Center(
+          child: Container(
+            width: 96,
+            height: 96,
+            decoration: BoxDecoration(
+                color: failed == 0 ? cs.primaryContainer : cs.errorContainer, shape: BoxShape.circle),
+            child: Icon(failed == 0 ? Icons.check_rounded : Icons.warning_amber_rounded,
+                size: 46, color: failed == 0 ? cs.onPrimaryContainer : cs.onErrorContainer),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(failed == 0 ? 'Logger erased' : 'Logger partly erased',
+            style: t.headlineSmall?.copyWith(fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+        const SizedBox(height: 12),
+        Text(
+          [
+            'It deleted $n log ${n == 1 ? 'file' : 'files'}, and its trip meter is back to zero.',
+            if (since != null) 'The trip meter on this phone now counts from ${Fmt.date(since)}, ${Fmt.time(since)} too.',
+          ].join(' '),
+          style: t.bodyLarge?.copyWith(color: cs.onSurfaceVariant, height: 1.4),
+          textAlign: TextAlign.center,
+        ),
+        if (failed > 0) ...[
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: cs.errorContainer, borderRadius: BorderRadius.circular(16)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                '$failed ${failed == 1 ? 'file' : 'files'} couldn\'t be deleted and ${failed == 1 ? 'is' : 'are'} '
+                'still on the logger${controller.remaining.isEmpty ? '.' : ':'}',
+                style: t.titleSmall?.copyWith(color: cs.onErrorContainer, fontWeight: FontWeight.w700),
+              ),
+              for (final f in controller.remaining)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(children: [
+                    Expanded(child: Text(f.name, style: t.bodyMedium?.copyWith(color: cs.onErrorContainer))),
+                    const SizedBox(width: 12),
+                    Text(Fmt.bytes(f.size), style: t.bodyMedium?.copyWith(color: cs.onErrorContainer)),
+                  ]),
+                ),
+              const SizedBox(height: 8),
+              Text(
+                controller.remaining.length < failed
+                    ? 'Files already synced (in /uploaded) aren\'t listed. Try erasing again, or check the card on a computer.'
+                    : 'Try erasing again, or check the card on a computer.',
+                style: t.bodyMedium?.copyWith(color: cs.onErrorContainer),
+              ),
+            ]),
+          ),
+        ],
+        for (final note in notes) ...[
+          const SizedBox(height: 16),
+          Text(note, style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant), textAlign: TextAlign.center),
+        ],
+        const SizedBox(height: 28),
+        if (failed > 0) ...[
+          FilledButton(onPressed: controller.start, child: const Text('Erase again')),
+          const SizedBox(height: 10),
+        ],
+        (failed > 0 ? OutlinedButton.new : FilledButton.new)(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Done'),
+        ),
       ]),
     );
   }

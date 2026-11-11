@@ -13,13 +13,25 @@ const int eraseProtocolVersion = 3;
 
 /// What the logger reported after erasing.
 class LoggerEraseResult {
-  const LoggerEraseResult({required this.deletedFiles, this.meter});
+  const LoggerEraseResult({
+    required this.deletedFiles,
+    this.failedFiles = 0,
+    this.resetNotSaved = false,
+    required this.meter,
+  });
 
   /// How many log files the logger deleted.
   final int deletedFiles;
 
-  /// The logger's trip meter afterwards (at zero), if it sent one.
-  final MeterEvent? meter;
+  /// Log files it couldn't delete. They're still on the card.
+  final int failedFiles;
+
+  /// The logger couldn't save its new reset time to the card, so after a
+  /// restart it would count from the old one.
+  final bool resetNotSaved;
+
+  /// The logger's trip meter afterwards: zero, counting from its new reset.
+  final MeterEvent meter;
 }
 
 /// Erasing the logger's log files (ERASE_LOGS, protocol v3, in
@@ -45,9 +57,22 @@ class BleLoggerEraser extends LoggerEraser {
 
   @override
   Future<LoggerEraseResult> erase(LoggerSession session) async {
-    // The message format is being specified in docs/ble-protocol.md (v3).
-    // Nothing is sent until it's implemented from the spec.
-    throw TransferException('This version of Catch Log can\'t erase the logger yet. Update the app, then try again.');
+    try {
+      final (erased, meter) = await session.eraseLogs();
+      return LoggerEraseResult(
+        deletedFiles: erased.deleted,
+        failedFiles: erased.failed,
+        resetNotSaved: erased.resetNotSaved,
+        meter: meter,
+      );
+    } on TransferException catch (e) {
+      // Busy (4), no card (5), short (9) or bad guard bytes (10): the logger
+      // erased nothing.
+      if (const {4, 5, 9, 10}.contains(e.loggerError)) {
+        throw TransferException('${e.message}. Nothing was erased.', loggerError: e.loggerError);
+      }
+      rethrow;
+    }
   }
 }
 
@@ -105,10 +130,21 @@ Future<LoggerConnection> connectToLogger() async {
 /// synced so the person can see what would be lost, waits for confirmation,
 /// then erases, all on one connection.
 class EraseLoggerController extends ChangeNotifier {
-  EraseLoggerController({this.eraser = const BleLoggerEraser(), this.connect = connectToLogger});
+  EraseLoggerController({this.eraser = const BleLoggerEraser(), this.connect = connectToLogger, this.onMeterReset});
 
   final LoggerEraser eraser;
   final Future<LoggerConnection> Function() connect;
+
+  /// Told the logger's new meter reset (null if it had no GPS time), so the
+  /// phone's trip meter counts from the same moment. Returns the phone's
+  /// reset time.
+  final Future<DateTime> Function(DateTime? loggerReset)? onMeterReset;
+
+  /// The phone's trip meter reset after the erase.
+  DateTime? phoneResetAt;
+
+  /// Files still on the logger after an erase that couldn't delete them all.
+  List<FileEvent> remaining = [];
 
   EraseLoggerPhase phase = EraseLoggerPhase.connecting;
   String? error;
@@ -135,6 +171,8 @@ class EraseLoggerController extends ChangeNotifier {
     await _close();
     result = null;
     unsynced = [];
+    remaining = [];
+    phoneResetAt = null;
     _set(EraseLoggerPhase.connecting);
     try {
       final link = await connect();
@@ -165,8 +203,21 @@ class EraseLoggerController extends ChangeNotifier {
     if (phase != EraseLoggerPhase.confirm || link == null) return;
     _set(EraseLoggerPhase.erasing);
     try {
-      result = await eraser.erase(link.session);
-      debugPrint('[erase] the logger deleted ${result!.deletedFiles} files');
+      final r = result = await eraser.erase(link.session);
+      debugPrint('[erase] the logger deleted ${r.deletedFiles} files, ${r.failedFiles} failed, '
+          'flags ${r.resetNotSaved ? 1 : 0}; meter reset ${r.meter.resetUtcSeconds}');
+      if (r.failedFiles > 0) {
+        try {
+          remaining = (await link.session.list())..sort((a, b) => a.name.compareTo(b.name));
+        } catch (e) {
+          debugPrint('[erase] couldn\'t list what was left: $e');
+        }
+      }
+      final adopt = onMeterReset;
+      if (adopt != null) {
+        phoneResetAt = await adopt(r.meter.resetAt);
+        debugPrint('[erase] phone trip meter now counts from $phoneResetAt');
+      }
       _set(EraseLoggerPhase.done);
     } catch (e) {
       _set(EraseLoggerPhase.failed, err: _friendly(e));

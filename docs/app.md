@@ -22,11 +22,14 @@ The code is in [`app/`](../app).
 
 **Erase logger files…** (⋮ menu, and offered after Erase all data) deletes the log files on the logger's card, on a live connection only:
 1. It connects (the logger's switch on Transfer) and lists the files not yet synced, which are the ones that would be lost.
-2. It waits for confirmation, then erases.
-3. An erase is never queued for a later sync, because it could delete trips logged in the meantime.
-4. A logger on protocol version 2 is told to update its firmware, and nothing is sent.
+2. It waits for confirmation, then sends ERASE_LOGS (protocol version 3, "Erasing the logs" in [ble-protocol.md](ble-protocol.md)). The logger deletes every `gps*.csv` in its root folder and in `/uploaded`, and replies with how many files it deleted and how many it couldn't.
+3. If some couldn't be deleted, the app lists the root folder again and names the files still there. Files left in `/uploaded` can only be counted, because LIST doesn't show that folder.
+4. The logger's meter restarts at zero from its own clock. The phone's trip meter takes the same reset time, replacing any reset queued for the logger. If the logger had no GPS time, it resets to 0, so the phone resets to now and sends that at the next sync.
+5. If the logger is busy (ERROR 4) or has no card (ERROR 5), nothing is erased, and the screen says so.
+6. An erase is never queued for a later sync, because it could delete trips logged in the meantime.
+7. A logger on protocol version 2 is told to update its firmware, and nothing is sent after HELLO.
 
-The ERASE_LOGS command is protocol version 3, which is still being specified in [ble-protocol.md](ble-protocol.md). Until the app implements it from the spec, `BleLoggerEraser` in [logger_eraser.dart](../app/lib/sync/logger_eraser.dart) sends nothing and asks for an app update. It isn't on the sync screen, because opening that screen starts downloading files.
+The command is in [logger_eraser.dart](../app/lib/sync/logger_eraser.dart) (`BleLoggerEraser`). It isn't on the sync screen, because opening that screen starts downloading files.
 
 ## Building and running
 
@@ -75,7 +78,7 @@ flutter analyze
 
 The tests use the sample CSVs in `app/test/fixtures`. To regenerate those, run `python tool/make_fixtures.py` from `app/`.
 
-`test/erase_test.dart` covers Remove sample trips, Erase all data and the database state after each, and the logger erase flow against the fake logger with a stand-in for ERASE_LOGS.
+`test/erase_test.dart` covers Remove sample trips, Erase all data and the database state after each, and the logger erase flow against the fake logger, which implements ERASE_LOGS as the spec describes. That includes the spec's example bytes, files that won't delete, a logger with no GPS time, and busy or no card.
 
 `test/metrics_test.dart` reads the shared fixtures in `test-data/` and checks the app gives the same figures as `tools/metrics.py` and the logger: 0 m and 0 s for `stationary-desk.csv`, and 6667 m and 11 205 s for `moving-noisy.csv`. It also checks the trip meter with a reset part way through a trip. The figures match exactly. The logger reports whole metres, so distances are compared rounded to the metre.
 
