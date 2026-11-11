@@ -26,6 +26,12 @@ abstract final class Fmt {
 
   static String dayShort(DateTime t) => DateFormat('EEE d MMM').format(t.toLocal());
 
+  /// Like [dayShort], with the year when it isn't this year: "Sun 9 Nov 2025".
+  static String date(DateTime t, {DateTime? now}) {
+    final l = t.toLocal();
+    return l.year == (now ?? DateTime.now()).year ? dayShort(l) : DateFormat('EEE d MMM y').format(l);
+  }
+
   static String month(DateTime t) => DateFormat('MMMM y').format(t.toLocal());
 
   /// "Morning trip", "Evening trip"... from the local start time.

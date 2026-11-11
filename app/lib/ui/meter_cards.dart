@@ -67,7 +67,7 @@ class TripMeterCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: Text(
-              since == null ? 'Since your first trip' : 'Since ${Fmt.dayShort(since)}, ${Fmt.time(since)}',
+              since == null ? 'Since your first trip' : 'Since ${Fmt.date(since)}, ${Fmt.time(since)}',
               style: t.bodyMedium?.copyWith(color: on.withValues(alpha: 0.8)),
             ),
           ),
@@ -185,7 +185,7 @@ class TotalsCard extends StatelessWidget {
                     style: t.labelLarge?.copyWith(color: cs.primary, letterSpacing: 1.2, fontWeight: FontWeight.w800)),
               ]),
               if (first != null)
-                Text('since ${Fmt.dayShort(first)}', style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+                Text('since ${Fmt.date(first)}', style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
             ]),
           ),
           StatGrid(children: [
@@ -228,7 +228,7 @@ class LoggerMeterPanel extends StatelessWidget {
       if (r.outcome == MeterSyncOutcome.realigned)
         'The logger was counting from a different time, so it now counts from the phone\'s last reset.',
       if (r.outcome == MeterSyncOutcome.adopted && logger?.resetAt != null)
-        'The phone now counts from the logger\'s last reset, ${Fmt.dayShort(logger!.resetAt!)}, ${Fmt.time(logger.resetAt!)}.',
+        'The phone now counts from the logger\'s last reset, ${Fmt.date(logger!.resetAt!)}, ${Fmt.time(logger.resetAt!)}.',
       if (r.outcome == MeterSyncOutcome.unsupported)
         'The logger\'s firmware has no trip meter yet. Your reset is kept and sent once it does.',
       if (r.outcome == MeterSyncOutcome.failed)
