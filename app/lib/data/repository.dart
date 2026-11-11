@@ -7,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../core/geo.dart';
 import '../core/log_csv.dart';
+import '../core/meter.dart';
 import '../core/trips.dart';
 
 class Trip {
@@ -350,6 +351,91 @@ class Repository {
   Future<DateTime?> lastSync() async {
     final v = Sqflite.firstIntValue(await db.rawQuery('SELECT MAX(received_at) FROM files'));
     return v == null ? null : DateTime.fromMillisecondsSinceEpoch(v);
+  }
+
+  // --- Trip meter ---------------------------------------------------------
+  //
+  // Like a car's trip meter: catches, distance and time on the water since
+  // the last reset. The reset time (UTC) lives here, and the meter is worked
+  // out from the synced data, so a reset works with no logger in reach. The
+  // logger keeps its own copy of the meter for its screen; a reset made on
+  // the phone is queued and sent at the next sync, with this same time.
+
+  static const _meterResetKey = 'meter_reset_ms';
+  static const _meterPendingKey = 'meter_reset_pending_ms';
+
+  Future<String?> _setting(String key) async {
+    final r = await db.query('settings', where: 'key = ?', whereArgs: [key], limit: 1);
+    return r.isEmpty ? null : r.first['value'] as String;
+  }
+
+  Future<void> _setSetting(DatabaseExecutor ex, String key, String? value) async {
+    if (value == null) {
+      await ex.delete('settings', where: 'key = ?', whereArgs: [key]);
+    } else {
+      await ex.insert('settings', {'key': key, 'value': value}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  DateTime? _utc(String? ms) =>
+      ms == null ? null : DateTime.fromMillisecondsSinceEpoch(int.parse(ms), isUtc: true);
+
+  /// When the meter was last reset, or null if it never has been (it then
+  /// counts everything).
+  Future<DateTime?> meterResetAt() async => _utc(await _setting(_meterResetKey));
+
+  /// A reset made on the phone that the logger hasn't been told about yet.
+  Future<DateTime?> pendingMeterReset() async => _utc(await _setting(_meterPendingKey));
+
+  /// Resets the meter to zero now (or at [at]) and queues the reset for the logger.
+  Future<DateTime> resetMeter({DateTime? at}) async {
+    // Whole seconds: the logger's clock and CSV times have no milliseconds.
+    final ms = ((at ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000) * 1000;
+    await db.transaction((txn) async {
+      await _setSetting(txn, _meterResetKey, '$ms');
+      await _setSetting(txn, _meterPendingKey, '$ms');
+    });
+    _notify();
+    return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+  }
+
+  /// Called once the logger has accepted the reset sent at [sent]. A newer
+  /// reset made in the meantime stays queued.
+  Future<void> meterResetDelivered(DateTime sent) async {
+    final pending = await pendingMeterReset();
+    if (pending != null && pending.millisecondsSinceEpoch == sent.millisecondsSinceEpoch) {
+      await _setSetting(db, _meterPendingKey, null);
+      _notify();
+    }
+  }
+
+  /// The trip meter: everything since the last reset. A trip under way at the
+  /// reset counts only from the reset on.
+  Future<MeterReading> meter() async {
+    final since = (await meterResetAt())?.millisecondsSinceEpoch;
+    final all = await trips();
+    if (since == null) return sumTrips(all.map((t) => t.stats));
+    final parts = <TripStats>[];
+    for (final t in all) {
+      if (t.stats.endMs < since) continue;
+      if (t.stats.startMs >= since) {
+        parts.add(t.stats);
+      } else {
+        final pts = await _pointsBetween(since, t.stats.endMs);
+        final cs = await _catchesBetween(since, t.stats.endMs);
+        parts.add(computeTripStats(pts, [for (final c in cs) c.event]));
+      }
+    }
+    return sumTrips(parts);
+  }
+
+  /// All-time totals, including catches made before the logger had the time.
+  Future<MeterReading> totals() async {
+    final byAngler = {
+      for (final r in await db.rawQuery('SELECT angler, COUNT(*) AS n FROM catches GROUP BY angler'))
+        r['angler'] as String: r['n'] as int
+    };
+    return sumTrips((await trips()).map((t) => t.stats), catchesByAngler: byAngler);
   }
 
   Future<List<TrackPoint>> _pointsBetween(int a, int b) async => [

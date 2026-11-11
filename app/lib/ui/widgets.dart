@@ -39,10 +39,11 @@ class AnglerCount extends StatelessWidget {
 
 /// A labelled number, for stats grids.
 class StatTile extends StatelessWidget {
-  const StatTile({super.key, required this.label, required this.value, this.icon});
+  const StatTile({super.key, required this.label, required this.value, this.icon, this.iconColor});
   final String label;
   final String value;
   final IconData? icon;
+  final Color? iconColor;
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +54,7 @@ class StatTile extends StatelessWidget {
       decoration: BoxDecoration(color: cs.surfaceContainer, borderRadius: BorderRadius.circular(16)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (icon != null) ...[Icon(icon, size: 16, color: cs.primary), const SizedBox(width: 6)],
+          if (icon != null) ...[Icon(icon, size: 16, color: iconColor ?? cs.primary), const SizedBox(width: 6)],
           Expanded(
             child: Text(label,
                 style: t.labelMedium?.copyWith(color: cs.onSurfaceVariant),

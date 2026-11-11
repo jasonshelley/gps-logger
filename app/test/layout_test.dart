@@ -7,11 +7,13 @@ import 'package:catch_log/main.dart';
 import 'package:catch_log/sync/sync_controller.dart';
 import 'package:catch_log/ui/catch_card.dart';
 import 'package:catch_log/ui/home_screen.dart';
+import 'package:catch_log/ui/meter_cards.dart';
 import 'package:catch_log/ui/sync_screen.dart';
 import 'package:catch_log/ui/theme.dart';
 import 'package:catch_log/ui/trip_screen.dart';
 import 'package:catch_log/ui/widgets.dart';
 import 'package:catch_log/core/astro.dart';
+import 'package:catch_log/core/meter.dart';
 import 'package:catch_log/core/conditions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,6 +96,14 @@ void sweep(String name, Future<void> Function(WidgetTester tester) body) {
       _errors.clear();
     }
   });
+}
+
+void _noop() {}
+
+/// The meter cards take their numbers as arguments; they never touch the database.
+class _NoDb implements Database {
+  @override
+  dynamic noSuchMethod(Invocation i) => throw UnimplementedError('${i.memberName}');
 }
 
 void main() {
@@ -179,6 +189,73 @@ void main() {
         expect(_overflows(tester), isEmpty, reason: 'phase ${p.name}');
       }
       await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() => repo.db.close());
+    });
+
+    sweep('trip meter and totals cards fit at font ×$scale', (tester) async {
+      _useS21(tester);
+      const big = MeterReading(
+        catchesByAngler: {'Jase': 1284, 'Matt': 977},
+        distanceM: 12873450,
+        onWater: Duration(hours: 1287, minutes: 59),
+        trips: 1342,
+      );
+      for (final b in Brightness.values) {
+        await tester.pumpWidget(_app(
+          AppServices(
+              repo: Repository(_NoDb(), logDir: Directory.systemTemp),
+              httpClient: MockClient((_) async => http.Response('', 500))),
+          Scaffold(
+            body: ListView(children: [
+              TripMeterCard(reading: big, since: DateTime.utc(2026, 9, 30, 21, 45), resetQueued: true, onReset: () {}),
+              const TripMeterCard(reading: MeterReading.zero, since: null, resetQueued: false, onReset: _noop),
+              TotalsCard(reading: big, firstTrip: DateTime.utc(2025, 12, 28)),
+              const TotalsCard(reading: MeterReading.zero),
+            ]),
+          ),
+          scale,
+          b: b,
+        ));
+        await tester.pump();
+        expect(_overflows(tester), isEmpty, reason: b.name);
+        for (var i = 0; i < 4; i++) {
+          await tester.drag(find.byType(ListView), const Offset(0, -500));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(_overflows(tester), isEmpty, reason: '${b.name}, scrolled');
+        }
+      }
+    });
+
+    sweep('resetting from home works and its dialog fits at font ×$scale', (tester) async {
+      _useS21(tester);
+      final tmp = Directory.systemTemp.createTempSync('catchlog');
+      final repo = await tester.runAsync(() => _repoWithFixtures(tmp));
+      final services = AppServices(repo: repo!, httpClient: MockClient((_) async => http.Response('', 500)));
+      Future<void> settle() async {
+        for (var i = 0; i < 4; i++) {
+          await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+          await tester.pump(const Duration(milliseconds: 150));
+        }
+      }
+
+      await tester.pumpWidget(_app(services, const HomeScreen(), scale));
+      await settle();
+      expect(find.text('TRIP METER'), findsOneWidget);
+      expect(find.text('Since your first trip'), findsOneWidget);
+      await tester.tap(find.text('Reset'));
+      await settle();
+      expect(find.text('Reset the trip meter?'), findsOneWidget);
+      expect(_overflows(tester), isEmpty, reason: 'dialog');
+      await tester.tap(find.widgetWithText(FilledButton, 'Reset'));
+      await settle();
+      expect(await tester.runAsync(() => repo.pendingMeterReset()), isNotNull);
+      // The home screen reloads from the database in the background.
+      for (var i = 0; i < 40 && !tester.any(find.textContaining('resets at the next sync')); i++) {
+        await settle();
+      }
+      expect(find.textContaining('resets at the next sync'), findsOneWidget);
+      expect(find.text('Since your first trip'), findsNothing);
+      expect(_overflows(tester), isEmpty, reason: 'after the reset');
       await tester.runAsync(() => repo.db.close());
     });
 

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../core/meter.dart';
 import '../data/repository.dart';
 import '../main.dart';
 import 'format.dart';
+import 'meter_cards.dart';
 import 'route_thumbnail.dart';
 import 'samples.dart';
 import 'sync_screen.dart';
@@ -17,11 +19,24 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeData {
-  const _HomeData(this.trips, this.undated, this.lastSync, this.hasSamples);
+  const _HomeData({
+    required this.trips,
+    required this.undated,
+    required this.lastSync,
+    required this.hasSamples,
+    required this.meter,
+    required this.meterSince,
+    required this.meterResetQueued,
+    required this.totals,
+  });
   final List<Trip> trips;
   final List<StoredCatch> undated;
   final DateTime? lastSync;
   final bool hasSamples;
+  final MeterReading meter;
+  final DateTime? meterSince;
+  final bool meterResetQueued;
+  final MeterReading totals;
 }
 
 class _HomeScreenState extends State<HomeScreen> {
@@ -44,15 +59,42 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _reload() {
-    if (mounted) setState(() => _data = _load());
+    // A block body: an arrow would hand setState the Future, which it rejects.
+    if (mounted) {
+      setState(() {
+        _data = _load();
+      });
+    }
   }
 
   Future<_HomeData> _load() async => _HomeData(
-        await _repo.trips(),
-        await _repo.undatedCatches(),
-        await _repo.lastSync(),
-        await _repo.hasSamples(),
+        trips: await _repo.trips(),
+        undated: await _repo.undatedCatches(),
+        lastSync: await _repo.lastSync(),
+        hasSamples: await _repo.hasSamples(),
+        meter: await _repo.meter(),
+        meterSince: await _repo.meterResetAt(),
+        meterResetQueued: await _repo.pendingMeterReset() != null,
+        totals: await _repo.totals(),
       );
+
+  Future<void> _resetMeter() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        icon: const Icon(Icons.restart_alt_rounded),
+        title: const Text('Reset the trip meter?'),
+        content: const Text('Catches, distance and time on the water start again from zero. '
+            'Your trips and all-time totals are kept.\n\n'
+            "The logger's meter resets too, the next time you sync."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Reset')),
+        ],
+      ),
+    );
+    if (ok == true) await _repo.resetMeter();
+  }
 
   Future<void> _openSync() async {
     final tripId = await Navigator.of(context).push<int>(SyncScreen.route());
@@ -132,7 +174,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               )
             else ...[
-              SliverToBoxAdapter(child: _SeasonCard(data: data)),
+              SliverToBoxAdapter(
+                child: TripMeterCard(
+                  reading: data.meter,
+                  since: data.meterSince,
+                  resetQueued: data.meterResetQueued,
+                  onReset: _resetMeter,
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: TotalsCard(reading: data.totals, firstTrip: data.trips.lastOrNull?.stats.start),
+              ),
               if (data.undated.isNotEmpty) SliverToBoxAdapter(child: _UndatedCard(data.undated)),
               ..._tripSlivers(data.trips),
               const SliverToBoxAdapter(child: SizedBox(height: 96)),
@@ -200,60 +252,6 @@ class _MonthHeader extends StatelessWidget {
       child: Text(label.toUpperCase(),
           style: t.labelLarge?.copyWith(
               letterSpacing: 1.2, color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w700)),
-    );
-  }
-}
-
-class _SeasonCard extends StatelessWidget {
-  const _SeasonCard({required this.data});
-  final _HomeData data;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final t = Theme.of(context).textTheme;
-    final byAngler = <String, int>{'Jase': 0, 'Matt': 0};
-    var dist = 0.0;
-    for (final trip in data.trips) {
-      dist += trip.stats.distanceM;
-      trip.stats.catchesByAngler.forEach((k, v) => byAngler[k] = (byAngler[k] ?? 0) + v);
-    }
-    final total = byAngler.values.fold(0, (a, b) => a + b);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [cs.primaryContainer, cs.tertiaryContainer],
-          ),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // A Wrap, so "fish logged" drops below the number with large text.
-          Wrap(spacing: 10, crossAxisAlignment: WrapCrossAlignment.end, children: [
-            Text('$total',
-                style: t.displayMedium?.copyWith(fontWeight: FontWeight.w800, color: cs.onPrimaryContainer, height: 1)),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(total == 1 ? 'fish' : 'fish logged',
-                  style: t.titleMedium?.copyWith(color: cs.onPrimaryContainer)),
-            ),
-          ]),
-          const SizedBox(height: 6),
-          Text(
-            '${data.trips.length} ${data.trips.length == 1 ? 'trip' : 'trips'} · ${Fmt.distance(dist)} on the water'
-            '${data.lastSync != null ? ' · synced ${Fmt.ago(data.lastSync!)}' : ''}',
-            style: t.bodyMedium?.copyWith(color: cs.onPrimaryContainer.withValues(alpha: 0.8)),
-          ),
-          const SizedBox(height: 16),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final e in byAngler.entries) AnglerCount(e.key, e.value),
-          ]),
-        ]),
-      ),
     );
   }
 }

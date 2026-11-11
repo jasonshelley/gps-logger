@@ -6,6 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 import '../ble/ble_link.dart';
 import '../ble/protocol.dart';
 import '../data/repository.dart';
+import 'logger_meter.dart';
 import 'logger_session.dart';
 import 'permissions.dart';
 
@@ -51,9 +52,12 @@ class SyncSummary {
 /// Runs one sync: permission, Bluetooth, scan, connect, then for each file
 /// download, check CRC, store, and only then confirm to the logger.
 class SyncController extends ChangeNotifier {
-  SyncController(this.repo);
+  SyncController(this.repo, {this.meter = const NoLoggerMeter()});
 
   final Repository repo;
+
+  /// Sends a trip meter reset made on the phone to the logger.
+  final LoggerMeter meter;
 
   SyncPhase phase = SyncPhase.idle;
   String? deviceName;
@@ -195,12 +199,13 @@ class SyncController extends ChangeNotifier {
 
     // 4. Connect and list.
     _set(SyncPhase.connecting);
+    final HelloEvent hello;
     try {
       _transport = await BleLoggerTransport.connect(device.deviceId);
       // cancel() during connect had no link to close yet.
       if (_cancelled) return;
       _session = LoggerSession(_transport!);
-      final hello = await _session!.hello();
+      hello = await _session!.hello();
       if (hello.version != protocolVersion) {
         debugPrint('Logger protocol v${hello.version}, app expects v$protocolVersion');
       }
@@ -217,7 +222,12 @@ class SyncController extends ChangeNotifier {
       return;
     }
 
-    // 5. Each file: download, check, store, confirm.
+    // 5. A trip meter reset made on the phone since the last sync. It never
+    // fails the sync: if it can't be sent it stays queued.
+    await sendQueuedMeterReset(repo, meter, _session!, hello);
+    if (_cancelled) return;
+
+    // 6. Each file: download, check, store, confirm.
     _transferStart = DateTime.now();
     _bytesAtStart = 0;
     _set(SyncPhase.transferring);

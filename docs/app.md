@@ -14,6 +14,7 @@ The code is in [`app/`](../app).
 2. Open Catch Log and tap **Sync**. The first time, Android asks for **Nearby devices**. That permission is Bluetooth only: the scan is declared `neverForLocation`.
 3. The app finds the logger, then downloads each file. For each file it checks the size and CRC-32, saves it, and only then sends CONFIRM, so the logger moves the file to `/uploaded`. A file that fails or is interrupted stays on the logger and comes across next time.
 4. Trips appear on the home screen. Tap one for the map, replay, catches and conditions.
+5. The **trip meter** at the top of the home screen counts catches, distance and time on the water since you last tapped **Reset**. The **All time** card below it never resets.
 
 **Add sample trips** (⋮ menu, or the button on the empty screen) loads two days of made-up Sydney Harbour trips, for trying the app before the logger has had a GPS fix outdoors. They're dated 52 weeks back so they can't clash with real logs. **Remove sample trips** deletes only them.
 
@@ -124,11 +125,23 @@ Connecting asks for MTU 247 and high connection priority, which gives 239-byte c
 | `catches` | Unique on (time, angler). Catches with no date have a null time and are shown apart from trips |
 | `trips` | Derived after every import. A trip is a run of records with no gap longer than 45 min. Its id is its start time |
 | `trip_conditions` | The Open-Meteo responses for each trip, cached so a trip opens offline |
+| `settings` | Key-value settings, added in schema version 2: the trip meter's reset time, and a reset still to be sent to the logger |
 
 How trip stats are worked out:
 
 - **Distance** is the sum of haversine legs inside each route segment. Segments break at gaps over 15 min, the same rule as the GPX export. Legs implying more than 120 km/h count as GPS glitches and are skipped.
 - **Moving time** counts the legs where the average speed is at least 2 km/h.
+
+### Trip meter and totals
+
+The top of the home screen works like a car's trip meter. It shows catches per angler, distance and time on the water since the last **Reset**. The card below it shows the all-time totals: catches per angler, distance, time on the water, trips, and fish in all.
+
+- The reset time is stored in the `settings` table (schema version 2) as UTC milliseconds, rounded to the second. The meter is worked out from the synced data, so a reset works with no logger in reach.
+- Trips that started after the reset count in full. A trip under way at the reset counts only from the reset on: its stats are recomputed from the points and catches after it.
+- "Time on the water" adds up each trip's span, from its first record to its last.
+- The totals include catches the logger made before it had the time. The meter leaves those out, because it can't tell whether they came before or after the reset.
+- A reset is also queued for the logger, so its screen shows the same meter. At the next sync, after LIST and before the downloads, `sendQueuedMeterReset` sends it through the `LoggerMeter` interface ([logger_meter.dart](../app/lib/sync/logger_meter.dart)). The queue clears only once the logger accepts it. A reset that can't be sent stays queued and never fails the sync. If the phone is reset again before a sync, only the newest reset is sent.
+- **Waiting on the firmware.** The meter commands will be documented in `docs/ble-protocol.md`. Until they are, the app uses `NoLoggerMeter`, which reports that the logger doesn't support them, so resets stay queued. Supporting them means writing a `LoggerMeter` that does two things: recognise a capable logger from its HELLO, and send the reset time (the logger counts from that time, whatever its own clock says). Then pass it to `SyncController`.
 
 ### Map and replay
 
@@ -166,6 +179,7 @@ On 2026-11-11, on a Galaxy S21 (SM-G991B, Android 15), with the logger on COM3 i
 - The first attempt was closed after the import but before CONFIRM. The second sync recognised the file as already stored and only confirmed it, which is the designed recovery.
 - That first attempt exposed two races in cancelling a sync, both now fixed (commit `b0bf3c0`). A cancel during the Bluetooth connect was missed. A cancel while a file was being saved could disconnect before CONFIRM. Now a file that has started saving always gets its CONFIRM before the run stops. This fix hasn't been run on the phone yet.
 - The app restarting during testing was `flutter run` installing a new build (Android logs it as a force stop), not a crash. No Dart exception or native crash was logged.
+- After the first sync the home screen didn't refresh. A `setState` call handed Flutter a Future. Debug builds reject that before redrawing, so after a database change home only caught up when something else redrew it. The layout test found this when the trip meter was added, and it's fixed.
 - The trip screen's stats tiles overflowed by 5.9 px on the S21 (font scale 1.1). They now sit two to a row and size to their content. The layout test also found, and I fixed, overflows at larger fonts in the condition chips, the season card on home, the download ring, the trip title row and the replay banner. None of these fixes has been seen on the phone yet.
 
 ## What's next

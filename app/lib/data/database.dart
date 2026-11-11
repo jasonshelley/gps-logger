@@ -1,7 +1,7 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-const int schemaVersion = 1;
+const int schemaVersion = 2;
 
 /// Opens (and creates or upgrades) the app's SQLite database.
 /// [factory] lets tests pass the in-memory FFI factory.
@@ -13,7 +13,13 @@ Future<Database> openAppDatabase({DatabaseFactory? factory, String? path}) async
     options: OpenDatabaseOptions(
       version: schemaVersion,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, _) => _create(db),
+      onCreate: (db, _) async {
+        await _create(db);
+        await _createSettings(db);
+      },
+      onUpgrade: (db, from, to) async {
+        if (from < 2) await _createSettings(db);
+      },
     ),
   );
 }
@@ -88,3 +94,7 @@ Future<void> _create(Database db) async {
     )''');
   await b.commit(noResult: true);
 }
+
+/// Version 2: small key-value settings, such as the trip meter's reset time.
+Future<void> _createSettings(Database db) =>
+    db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
