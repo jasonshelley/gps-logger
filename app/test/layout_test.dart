@@ -260,8 +260,8 @@ void main() {
 
       await tester.pumpWidget(_app(services, const HomeScreen(), scale));
       await settle();
-      expect(find.text('TRIP METER'), findsOneWidget);
-      expect(find.text('Since your first trip'), findsOneWidget);
+      expect(find.textContaining('TRIP METER', findRichText: true), findsOneWidget);
+      expect(find.text('Since the first trip'), findsOneWidget);
       await tester.tap(find.text('Reset'));
       await settle();
       expect(find.text('Reset the trip meter?'), findsOneWidget);
@@ -274,7 +274,7 @@ void main() {
         await settle();
       }
       expect(find.textContaining('resets at the next sync'), findsOneWidget);
-      expect(find.text('Since your first trip'), findsNothing);
+      expect(find.text('Since the first trip'), findsNothing);
       expect(_overflows(tester), isEmpty, reason: 'after the reset');
       await tester.runAsync(() => repo.db.close());
     });

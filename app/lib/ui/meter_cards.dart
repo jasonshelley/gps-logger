@@ -12,7 +12,8 @@ const _anglers = ['Jase', 'Matt'];
 Map<String, int> _withAnglers(Map<String, int> m) => {for (final a in _anglers) a: 0, ...m};
 
 /// Like a car's trip meter: catches per angler, distance and time on the
-/// water since the last reset.
+/// water since the last reset. The hero of the home screen, kept compact:
+/// a header line, then the two catch counts with distance and time beside them.
 class TripMeterCard extends StatelessWidget {
   const TripMeterCard({
     super.key,
@@ -36,11 +37,12 @@ class TripMeterCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     final on = cs.onPrimaryContainer;
+    final soft = on.withValues(alpha: 0.75);
     final since = this.since;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 14, 12, 20),
+        padding: const EdgeInsets.fromLTRB(18, 8, 6, 16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
           gradient: LinearGradient(
@@ -51,45 +53,55 @@ class TripMeterCard extends StatelessWidget {
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(Icons.speed_rounded, size: 18, color: on),
-            const SizedBox(width: 8),
             Expanded(
-              child: Text('TRIP METER',
-                  style: t.labelLarge?.copyWith(color: on, letterSpacing: 1.2, fontWeight: FontWeight.w800)),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('TRIP METER',
+                      style: t.labelLarge?.copyWith(color: on, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
+                  Text(
+                    since == null ? 'Since the first trip' : 'Since ${Fmt.date(since)}, ${Fmt.time(since)}',
+                    style: t.labelMedium?.copyWith(color: soft),
+                  ),
+                ]),
+              ),
             ),
             TextButton.icon(
               onPressed: onReset,
-              style: TextButton.styleFrom(foregroundColor: on),
-              icon: const Icon(Icons.restart_alt_rounded, size: 20),
+              style: TextButton.styleFrom(foregroundColor: on, visualDensity: VisualDensity.compact),
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
               label: const Text('Reset'),
             ),
           ]),
+          const SizedBox(height: 6),
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Text(
-              since == null ? 'Since your first trip' : 'Since ${Fmt.date(since)}, ${Fmt.time(since)}',
-              style: t.bodyMedium?.copyWith(color: on.withValues(alpha: 0.8)),
+            padding: const EdgeInsets.only(right: 12),
+            // One row when it fits, metrics at the right; with large text the
+            // metrics drop below.
+            child: _SpreadRow(
+              children: [
+                Wrap(spacing: 28, runSpacing: 8, children: [
+                  for (final e in _withAnglers(reading.catchesByAngler).entries)
+                    _BigCount(angler: e.key, count: e.value),
+                ]),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  _Metric(icon: Icons.route_rounded, value: Fmt.distance(reading.distanceM), color: on),
+                  const SizedBox(height: 4),
+                  _Metric(icon: Icons.schedule_rounded, value: Fmt.duration(reading.onWater), color: on),
+                ]),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          Wrap(spacing: 32, runSpacing: 12, children: [
-            for (final e in _withAnglers(reading.catchesByAngler).entries) _BigCount(angler: e.key, count: e.value),
-          ]),
-          const SizedBox(height: 18),
-          Wrap(spacing: 28, runSpacing: 10, children: [
-            _Metric(icon: Icons.route_rounded, value: Fmt.distance(reading.distanceM), label: 'distance'),
-            _Metric(icon: Icons.schedule_rounded, value: Fmt.duration(reading.onWater), label: 'on the water'),
-          ]),
           if (resetQueued) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             Padding(
-              padding: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.only(right: 12),
               child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Icon(Icons.sync_rounded, size: 16, color: on.withValues(alpha: 0.8)),
+                Icon(Icons.sync_rounded, size: 14, color: soft),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text('The logger\'s meter resets at the next sync',
-                      style: t.bodySmall?.copyWith(color: on.withValues(alpha: 0.8))),
+                      style: t.labelMedium?.copyWith(color: soft)),
                 ),
               ]),
             ),
@@ -112,49 +124,58 @@ class _BigCount extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
         Container(
-          width: 10,
-          height: 10,
+          width: 8,
+          height: 8,
           decoration: BoxDecoration(color: anglerColor(angler), shape: BoxShape.circle),
         ),
-        const SizedBox(width: 6),
-        Flexible(child: Text(angler, style: t.titleSmall?.copyWith(color: on, fontWeight: FontWeight.w700))),
+        const SizedBox(width: 5),
+        Flexible(child: Text(angler, style: t.labelLarge?.copyWith(color: on, fontWeight: FontWeight.w700))),
       ]),
       Text('$count',
-          style: t.displayMedium?.copyWith(
-              color: on,
-              fontWeight: FontWeight.w800,
-              height: 1.05,
-              fontFeatures: const [FontFeature.tabularFigures()])),
+          style: t.displaySmall?.copyWith(
+              color: on, fontWeight: FontWeight.w800, height: 1.1, fontFeatures: const [FontFeature.tabularFigures()])),
     ]);
   }
 }
 
 class _Metric extends StatelessWidget {
-  const _Metric({required this.icon, required this.value, required this.label});
+  const _Metric({required this.icon, required this.value, required this.color});
   final IconData icon;
   final String value;
-  final String label;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final on = Theme.of(context).colorScheme.onPrimaryContainer;
-    return Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
-      Icon(icon, size: 20, color: on),
-      const SizedBox(width: 8),
-      Flexible(
-        child: Text.rich(
-          TextSpan(children: [
-            TextSpan(text: value, style: t.titleLarge?.copyWith(color: on, fontWeight: FontWeight.w800)),
-            TextSpan(text: '  $label', style: t.bodyMedium?.copyWith(color: on.withValues(alpha: 0.8))),
-          ]),
-        ),
-      ),
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 18, color: color.withValues(alpha: 0.8)),
+      const SizedBox(width: 6),
+      Flexible(child: Text(value, style: t.titleMedium?.copyWith(color: color, fontWeight: FontWeight.w800))),
     ]);
   }
 }
 
-/// Everything ever logged: catches per angler, distance, time and trips.
+/// Two groups on one line, pushed to the left and right edges; the second
+/// wraps below the first when they don't fit side by side.
+class _SpreadRow extends StatelessWidget {
+  const _SpreadRow({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: double.infinity,
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.end,
+          spacing: 16,
+          runSpacing: 12,
+          children: children,
+        ),
+      );
+}
+
+/// Everything ever logged: catches per angler, trips, distance and time on
+/// the water. A tonal card that pairs with the trip meter above it.
 class TotalsCard extends StatelessWidget {
   const TotalsCard({super.key, required this.reading, this.firstTrip});
   final MeterReading reading;
@@ -164,46 +185,66 @@ class TotalsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
+    final on = cs.onSecondaryContainer;
     final first = firstTrip;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.6)),
-        ),
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        decoration: BoxDecoration(color: cs.secondaryContainer, borderRadius: BorderRadius.circular(24)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
-            child: Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.emoji_events_rounded, size: 18, color: cs.primary),
-                const SizedBox(width: 8),
-                Text('ALL TIME',
-                    style: t.labelLarge?.copyWith(color: cs.primary, letterSpacing: 1.2, fontWeight: FontWeight.w800)),
-              ]),
+          Text.rich(
+            TextSpan(children: [
+              TextSpan(
+                  text: 'ALL TIME',
+                  style: t.labelLarge?.copyWith(color: on, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
               if (first != null)
-                Text('since ${Fmt.date(first)}', style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+                TextSpan(
+                    text: '  ·  since ${Fmt.date(first)}',
+                    style: t.labelMedium?.copyWith(color: on.withValues(alpha: 0.75))),
             ]),
           ),
-          StatGrid(children: [
-            for (final e in _withAnglers(reading.catchesByAngler).entries)
-              StatTile(
-                label: e.key,
-                value: '${e.value}',
-                icon: Icons.phishing_rounded,
-                iconColor: anglerColor(e.key),
-              ),
-            StatTile(label: 'Distance', value: Fmt.distance(reading.distanceM), icon: Icons.route_rounded),
-            StatTile(label: 'On the water', value: Fmt.duration(reading.onWater), icon: Icons.schedule_rounded),
-            StatTile(label: 'Trips', value: '${reading.trips}', icon: Icons.directions_boat_rounded),
-            StatTile(label: 'Fish in all', value: '${reading.catches}', icon: Icons.set_meal_rounded),
+          const SizedBox(height: 10),
+          _SpreadRow(children: [
+            Wrap(spacing: 22, runSpacing: 8, children: [
+              for (final e in _withAnglers(reading.catchesByAngler).entries)
+                _MiniStat(value: '${e.value}', label: e.key, dot: anglerColor(e.key), color: on),
+              _MiniStat(value: '${reading.trips}', label: reading.trips == 1 ? 'trip' : 'trips', color: on),
+            ]),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              _Metric(icon: Icons.route_rounded, value: Fmt.distance(reading.distanceM), color: on),
+              const SizedBox(height: 4),
+              _Metric(icon: Icons.schedule_rounded, value: Fmt.duration(reading.onWater), color: on),
+            ]),
           ]),
         ]),
       ),
     );
+  }
+}
+
+class _MiniStat extends StatelessWidget {
+  const _MiniStat({required this.value, required this.label, required this.color, this.dot});
+  final String value;
+  final String label;
+  final Color color;
+  final Color? dot;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      Text(value,
+          style: t.titleMedium?.copyWith(
+              color: color, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        if (dot != null) ...[
+          Container(width: 7, height: 7, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
+          const SizedBox(width: 4),
+        ],
+        Flexible(child: Text(label, style: t.labelMedium?.copyWith(color: color.withValues(alpha: 0.75)))),
+      ]),
+    ]);
   }
 }
 
