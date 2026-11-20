@@ -177,7 +177,9 @@ void loop() {
       wakeScreen(now);  // stay readable while the phone is talking to us
       s_transferActiveAt = now;
     }
-    if (now - s_transferActiveAt >= TRANSFER_IDLE_MS) enterMode(Mode::Logging, "no phone for 10 min");
+    // Signed: s_transferActiveAt can be a millisecond after 'now' when enterMode() set it this pass.
+    if ((int32_t)(now - s_transferActiveAt) >= (int32_t)TRANSFER_IDLE_MS)
+      enterMode(Mode::Logging, "no phone for 10 min");
     if (now - s_lastFastUi >= UI_FAST_REFRESH_MS || s_lastFastUi == 0) {
       ui::refreshTransfer(now);
       s_lastFastUi = now;
