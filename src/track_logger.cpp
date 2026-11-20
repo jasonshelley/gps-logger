@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <SD.h>
 
+#include "anglers.h"
 #include "clock.h"
 #include "config.h"
 #include "log_reader.h"
@@ -33,7 +34,7 @@ static uint32_t s_lastFlushMs = 0;
 static DayStats s_stats;
 static bool s_needRebuild = false;
 // Catches made before the clock was set. They count towards the first day the clock shows.
-static uint32_t s_noDateJase = 0, s_noDateMatt = 0;
+static uint32_t s_noDate[MAX_ANGLERS] = {};
 static char s_noDateDay[9] = "";
 
 static_assert(MAX_HDOP == movemeter::kMaxHdop, "the GPS filter and the movement rule must agree");
@@ -48,8 +49,6 @@ static bool s_haveLogged = false;  // a point logged since boot
 static uint32_t s_lastLogMs = 0;
 static bool s_haveMove = false;
 static uint32_t s_lastMoveMs = 0;
-
-const char* anglerName(Angler a) { return a == Angler::Jase ? "Jase" : "Matt"; }
 
 static void fileFor(const char* day, char* path, size_t len) {
   snprintf(path, len, "/gps%s.csv", day);
@@ -202,8 +201,19 @@ static void scanDayFile(const char* path, ScanState& st) {
       st.prevLng = lng;
       st.prevUtc = t;
     } else if (strcmp(f[COL_TYPE], "catch") == 0) {
-      if (strncmp(f[COL_COMMENT], "Jase", 4) == 0) s_stats.jase++;
-      if (strncmp(f[COL_COMMENT], "Matt", 4) == 0) s_stats.matt++;
+      char name[ANGLER_NAME_MAX + 2];
+      int a = anglers::parseCatch(f[COL_COMMENT], name, sizeof(name)) ? anglers::find(name) : -1;
+      if (a >= 0) s_stats.catches[a]++;
+    } else if (strcmp(f[COL_TYPE], "undo") == 0) {
+      // Today's count only drops for a catch made today (or one with no time).
+      char name[ANGLER_NAME_MAX + 2];
+      time_t catchUtc;
+      if (!anglers::parseUndo(f[COL_COMMENT], name, sizeof(name), catchUtc)) return;
+      int a = anglers::find(name);
+      char day[9] = "";
+      if (catchUtc) clk::localDateStamp(catchUtc, day);
+      if (a >= 0 && s_stats.catches[a] > 0 && (!catchUtc || strcmp(day, s_stats.date) == 0))
+        s_stats.catches[a]--;
     }
   });
 }
@@ -237,16 +247,18 @@ static void rebuild(const char* day) {
       gpsrx::setLastGoodFix(g);
     }
   }
-  if (s_noDateJase || s_noDateMatt) {
+  bool anyNoDate = false;
+  for (uint32_t n : s_noDate) anyNoDate |= n > 0;
+  if (anyNoDate) {
     if (!s_noDateDay[0]) snprintf(s_noDateDay, sizeof(s_noDateDay), "%s", day);
-    if (strcmp(s_noDateDay, day) == 0) {
-      s_stats.jase += s_noDateJase;
-      s_stats.matt += s_noDateMatt;
-    }
+    if (strcmp(s_noDateDay, day) == 0)
+      for (int i = 0; i < MAX_ANGLERS; i++) s_stats.catches[i] += s_noDate[i];
   }
-  Serial.printf("[log] today %s: %lu points, %.0f m, Jase %lu, Matt %lu%s\n", s_stats.date,
-                (unsigned long)s_stats.points, s_stats.distanceM, (unsigned long)s_stats.jase,
-                (unsigned long)s_stats.matt, s_needRebuild ? " (card not mounted)" : "");
+  Serial.printf("[log] today %s: %lu points, %.0f m,", s_stats.date, (unsigned long)s_stats.points,
+                s_stats.distanceM);
+  for (int i = 0; i < anglers::count(); i++)
+    Serial.printf(" %s %lu", anglers::get(i).name, (unsigned long)s_stats.catches[i]);
+  Serial.printf("%s\n", s_needRebuild ? " (card not mounted)" : "");
 }
 
 // Makes sure s_stats is for the current local day.
@@ -300,7 +312,8 @@ void onLocation(const GoodFix& fix, uint32_t nowMs) {
   s_lastLogMs = nowMs;
 }
 
-bool logCatch(Angler who, uint32_t nowMs) {
+bool logCatch(int angler, uint32_t nowMs) {
+  if (angler < 0 || angler >= anglers::count()) return false;
   ensureDay();
   GoodFix cur;
   bool fresh = gpsrx::currentGoodFix(cur, nowMs);
@@ -315,24 +328,70 @@ bool logCatch(Angler who, uint32_t nowMs) {
     else if (fix.utc && nowUtc) ageS = (long)(nowUtc - fix.utc);
   }
 
-  char comment[16];
-  snprintf(comment, sizeof(comment), "%s catch", anglerName(who));
+  char comment[ANGLER_NAME_MAX + 8];
+  snprintf(comment, sizeof(comment), "%s catch", anglers::get(angler).name);
   char row[LOG_ROW_MAX];
   formatRow(row, sizeof(row), "catch", nowUtc, fix, ageS, comment);
 
   char day[9];
   if (nowUtc) {
     clk::localDateStamp(nowUtc, day);
-    if (who == Angler::Jase) s_stats.jase++; else s_stats.matt++;
   } else {
     snprintf(day, sizeof(day), "%s", kNoDate);
-    if (who == Angler::Jase) { s_noDateJase++; s_stats.jase++; } else { s_noDateMatt++; s_stats.matt++; }
+    s_noDate[angler]++;
   }
+  s_stats.catches[angler]++;
   push(day, row);
-  trip::onCatch(who, nowUtc);
+  trip::onCatch(angler, nowUtc);
   Serial.printf("[log] %s (fix %s, age %ld s)\n", comment,
                 fresh ? "current" : (fix.valid ? "last good" : "none"), ageS);
   return flush();
+}
+
+UndoResult logUndo(int angler, uint32_t nowMs) {
+  if (angler < 0 || angler >= anglers::count()) return UndoResult::NothingToUndo;
+  time_t catchUtc;
+  if (!trip::lastCatch(angler, catchUtc)) return UndoResult::NothingToUndo;
+  ensureDay();
+  time_t nowUtc = clk::isSet() ? clk::now() : 0;
+
+  // "<name> undo <time of the catch>", or "<name> undo" for a catch with no time.
+  char comment[ANGLER_NAME_MAX + 32];
+  int n = snprintf(comment, sizeof(comment), "%s undo", anglers::get(angler).name);
+  if (catchUtc) {
+    char iso[24];
+    clk::formatIsoUtc(catchUtc, iso, sizeof(iso));
+    snprintf(comment + n, sizeof(comment) - n, " %s", iso);
+  }
+  GoodFix none;  // an undo row has no position
+  char row[LOG_ROW_MAX];
+  formatRow(row, sizeof(row), "undo", nowUtc, none, -1, comment);
+
+  char day[9];
+  if (nowUtc) clk::localDateStamp(nowUtc, day);
+  else snprintf(day, sizeof(day), "%s", kNoDate);
+  push(day, row);
+
+  // Today's count drops if the catch was made today, or before the clock was set.
+  char catchDay[9] = "";
+  if (catchUtc) clk::localDateStamp(catchUtc, catchDay);
+  if (!catchUtc) {
+    if (s_noDate[angler]) s_noDate[angler]--;
+    if (s_stats.catches[angler]) s_stats.catches[angler]--;
+  } else if (strcmp(catchDay, s_stats.date) == 0 && s_stats.catches[angler]) {
+    s_stats.catches[angler]--;
+  }
+  trip::onUndo(angler);
+  Serial.printf("[log] %s\n", comment);
+  return flush() ? UndoResult::Undone : UndoResult::NotSaved;
+}
+
+void anglersChanged() {
+  if (!s_stats.known) return;
+  flush();
+  char day[9];
+  snprintf(day, sizeof(day), "%s", s_stats.date);
+  rebuild(day);
 }
 
 void tick(uint32_t nowMs) {
@@ -365,7 +424,7 @@ EraseResult eraseAllLogs() {
   // Drop what's buffered, so nothing erased is written straight back.
   s_count = 0;
   s_dropped = 0;
-  s_noDateJase = s_noDateMatt = 0;
+  for (uint32_t& n : s_noDate) n = 0;
   s_noDateDay[0] = 0;
   s_dayMove.clear();
   bool known = s_stats.known;

@@ -14,5 +14,8 @@
 .DS_Store
 Thumbs.db
 
+# Generated at build time by tools/fw_version.py
+include/fw_version.h
+
 # Python
 __pycache__/

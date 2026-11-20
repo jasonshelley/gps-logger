@@ -34,12 +34,30 @@
 
 // ---- Buttons and switch: active low to GND, internal pull-ups ----
 // GPIO 1-3 are on header U2, have nothing else attached, and aren't strapping pins.
-#define PIN_BTN_JASE      1
-#define PIN_BTN_MATT      2
+// Catch buttons, in angler order: button 1 is angler 1 (see /anglers.txt).
+// More buttons go here when there are pins for them (up to MAX_ANGLERS).
+#define ANGLER_BUTTON_PINS { 1, 2 }
+// Optional: the old mode switch. Closing or opening it still changes the mode,
+// and so does holding BOOT; whichever happened last wins. Without a switch the
+// pull-up reads open, so the logger boots in Logging mode.
 #define PIN_MODE_SWITCH   3   // LOW (closed to GND) = Transfer, HIGH (open) = Logging
+// The board's BOOT button. Held at reset it starts the ROM bootloader; after
+// boot it's a plain input (external pull-up): a press wakes the screen and
+// shows the details page, a hold switches between Logging and Transfer.
+#define PIN_BTN_BOOT      9
 
 #define BUTTON_DEBOUNCE_MS    50
+#define BUTTON_HOLD_MS        2000  // a catch button held this long undoes that angler's last catch
 #define SWITCH_DEBOUNCE_MS    250
+// Transfer mode goes back to Logging after this long without a phone connected,
+// so a logger left in Transfer doesn't miss a day's fishing.
+#define TRANSFER_IDLE_MS      600000
+
+// ---- Anglers: names and colours, set by the phone app, kept on the card ----
+#define MAX_ANGLERS           4
+#define ANGLER_NAME_MAX       12
+#define ANGLERS_FILE          "/anglers.txt"
+#define ANGLERS_TMP_FILE      "/anglers.tmp"
 
 // ---- Fix quality and the log rule (requirements Q6, Q7) ----
 #define MAX_HDOP                  5.0   // track points and "has lock" need HDOP <= this
@@ -71,9 +89,19 @@
 
 // ---- Screen ----
 #define CATCH_BANNER_MS       3000
-#define UI_SLOW_REFRESH_MS    1000      // satellites, course, speed
-#define UI_FAST_REFRESH_MS    200       // clock, status, transfer progress
-#define BACKLIGHT_PERCENT     90
+#define DETAILS_PAGE_MS       10000     // the BOOT button's details page stays up this long
+#define UI_SLOW_REFRESH_MS    1000
+#define UI_FAST_REFRESH_MS    500       // logger screen, details page seconds, transfer progress
+// The backlight is bright for BACKLIGHT_AWAKE_MS after any button press, a mode
+// change or a phone connecting, then dims. It's the biggest load we control.
+#define BACKLIGHT_BRIGHT_PERCENT 90
+#define BACKLIGHT_DIM_PERCENT    15
+#define BACKLIGHT_AWAKE_MS       30000
+
+// ---- Power ----
+// 80 MHz is plenty for 1 Hz GPS, a small screen and BLE, and draws less than the default 160.
+#define CPU_FREQ_MHZ          80
+#define LOOP_IDLE_MS          10        // main loop sleep between passes (1 ms while sending a file)
 
 // ---- Bluetooth LE transfer ----
 #define BLE_DEVICE_NAME       "GPS Logger"

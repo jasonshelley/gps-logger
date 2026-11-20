@@ -45,7 +45,7 @@
 <body>
 <main>
   <h1>GPS Logger Transfer</h1>
-  <p class="sub">Put the logger's switch on Transfer, then connect. Chrome on Android only.</p>
+  <p class="sub">Hold the logger's BOOT button for 2 s to switch to Transfer, then connect. Chrome on Android only.</p>
 
   <div class="card">
     <div class="row">
@@ -426,10 +426,11 @@ async function transferFile(f) {
 
     const csv = dec.decode(bytes);
     const base = f.name.replace(/\.csv$/i, "");
-    const { gpx, points, catches, skipped } = csvToGpx(csv, base);
+    const { gpx, points, catches, skipped, undone } = csvToGpx(csv, base);
     saveBlob(base + ".gpx", gpx, "application/gpx+xml");
     if ($("saveCsv").checked) saveBlob(f.name, csv, "text/csv");
     log(base + ".gpx: " + points + " track point(s), " + catches + " catch waypoint(s)" +
+        (undone ? ", " + undone + " undone catch(es) left out" : "") +
         (skipped ? ", " + skipped + " catch(es) without a position" : ""), skipped ? "warn" : "");
 
     setFileStatus(f, "confirming");
@@ -464,7 +465,8 @@ function csvToGpx(csv, name) {
   const segs = [];
   let seg = null, lastT = null;
   const wpts = [];
-  let points = 0, skipped = 0;
+  const catches = [];  // { angler, time, xml (null without a position), undone }
+  let points = 0, skipped = 0, undone = 0;
 
   for (const line of lines) {
     const f = line.split(",");
@@ -485,8 +487,9 @@ function csvToGpx(csv, name) {
       seg.push(p);
       points++;
     } else if (type === "catch") {
-      if (!lat || !lon) { skipped++; continue; }
       const comment = get(C.comment) || "Catch";
+      const angler = comment.replace(/ catch$/i, "").toLowerCase();
+      if (!lat || !lon) { catches.push({ angler, time, xml: null, undone: false }); continue; }
       const age = get(C.age);
       const desc = age && age !== "0" ? "Position from a fix " + age + " s old" : "Position from the current fix";
       let w = '  <wpt lat="' + lat + '" lon="' + lon + '">';
@@ -494,8 +497,23 @@ function csvToGpx(csv, name) {
       if (time) w += "<time>" + xmlEscape(time) + "</time>";
       w += "<name>" + xmlEscape(comment) + "</name><desc>" + xmlEscape(desc) + "</desc>";
       w += "<sym>Fishing Area</sym><type>catch</type></wpt>";
-      wpts.push(w);
+      catches.push({ angler, time, xml: w, undone: false });
+    } else if (type === "undo") {
+      // "<name> undo <time of the catch>", or "<name> undo" for a catch with no time:
+      // cancels that catch (the latest one by that angler, if there's no time).
+      const m = /^(.*) undo(?: (\S+))?$/i.exec(get(C.comment));
+      if (!m) continue;
+      const angler = m[1].toLowerCase(), catchTime = m[2] || "";
+      for (let i = catches.length - 1; i >= 0; i--) {
+        const c = catches[i];
+        if (!c.undone && c.angler === angler && (!catchTime || c.time === catchTime)) { c.undone = true; break; }
+      }
     }
+  }
+  for (const c of catches) {
+    if (c.undone) undone++;
+    else if (c.xml) wpts.push(c.xml);
+    else skipped++;
   }
 
   const out = [];
@@ -509,7 +527,7 @@ function csvToGpx(csv, name) {
     out.push("  </trk>");
   }
   out.push("</gpx>", "");
-  return { gpx: out.join("\n"), points, catches: wpts.length, skipped };
+  return { gpx: out.join("\n"), points, catches: wpts.length, skipped, undone };
 }
 
 // ---- Wire up ----

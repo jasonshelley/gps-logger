@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <freertos/queue.h>
 
+#include "anglers.h"
 #include "config.h"
 #include "clock.h"
 #include "crc32.h"
@@ -20,7 +21,7 @@ static const char* kRxUuid = "1f5f0002-56c8-49fb-9d0c-055269d0a2e3";  // phone -
 static const char* kTxUuid = "1f5f0003-56c8-49fb-9d0c-055269d0a2e3";  // device -> phone (notify)
 
 // v2 added METER and METER_RESET; v3 added ERASE_LOGS. Earlier messages are unchanged.
-static const uint8_t kProtocolVersion = 3;
+static const uint8_t kProtocolVersion = 4;
 
 // ERASE_LOGS must carry these four bytes, "ERAS", so a stray write can't erase anything.
 static const uint8_t kEraseMagic[4] = {'E', 'R', 'A', 'S'};
@@ -34,6 +35,8 @@ enum : uint8_t {
   CMD_METER = 0x06,        // v2
   CMD_METER_RESET = 0x07,  // v2
   CMD_ERASE_LOGS = 0x08,   // v3
+  CMD_GET_ANGLERS = 0x09,  // v4
+  CMD_SET_ANGLER = 0x0A,   // v4
 
   EVT_HELLO = 0x81,
   EVT_FILE = 0x82,
@@ -43,6 +46,7 @@ enum : uint8_t {
   EVT_CONFIRMED = 0x86,
   EVT_METER = 0x87,        // v2
   EVT_ERASED = 0x88,       // v3
+  EVT_ANGLER = 0x89,       // v4
   EVT_DATA = 0x90,
   EVT_ERROR = 0xEE,
 };
@@ -58,6 +62,7 @@ enum : uint8_t {
   ERR_MOVE_FAILED = 8,
   ERR_BAD_LENGTH = 9,
   ERR_BAD_MAGIC = 10,      // v3: ERASE_LOGS without the right confirmation bytes
+  ERR_BAD_ANGLERS = 11,    // v4: SET_ANGLER with a bad name, colour, count or order
 };
 
 static const size_t kMaxCmd = 96;
@@ -289,14 +294,18 @@ static void handleConfirm(const uint8_t* arg, size_t len) {
   sendEvent(buf, 1 + n);
 }
 
-// METER: reset:u32, jase:u16, matt:u16, distance_m:u32, water_s:u32, flags:u8
+// METER: reset:u32, catches1:u16, catches2:u16, distance_m:u32, water_s:u32, flags:u8.
+// catches1 and catches2 are anglers 1 and 2 (v2 called them jase and matt);
+// ANGLER events carry every angler's count.
 static void sendMeter() {
   const trip::Meter& m = trip::meter();
   uint8_t buf[18];
   buf[0] = EVT_METER;
   put32(buf + 1, (uint32_t)m.resetUtc);
-  uint16_t j = m.jase > 0xFFFF ? 0xFFFF : (uint16_t)m.jase;
-  uint16_t t = m.matt > 0xFFFF ? 0xFFFF : (uint16_t)m.matt;
+  uint32_t c1 = anglers::count() > 0 ? m.catches[0] : 0;
+  uint32_t c2 = anglers::count() > 1 ? m.catches[1] : 0;
+  uint16_t j = c1 > 0xFFFF ? 0xFFFF : (uint16_t)c1;
+  uint16_t t = c2 > 0xFFFF ? 0xFFFF : (uint16_t)c2;
   buf[5] = j & 0xFF;
   buf[6] = j >> 8;
   buf[7] = t & 0xFF;
@@ -347,6 +356,82 @@ static void handleEraseLogs(const uint8_t* arg, size_t len) {
   sendMeter();
 }
 
+// ---- Anglers (v4) ----
+
+static bool s_anglersChanged = false;
+// SET_ANGLER messages collect here until the last one arrives.
+static anglers::Angler s_staged[MAX_ANGLERS];
+static int s_stagedCount = 0;  // the set's size; 0 = nothing staged
+static int s_stagedNext = 0;   // the index expected next
+
+// ANGLER: index:u8, count:u8, buttons:u8, colour:u8, catches:u16, name. At most 19 bytes.
+static void sendAnglers() {
+  const trip::Meter& m = trip::meter();
+  int n = anglers::count();
+  for (int i = 0; i < n; i++) {
+    const anglers::Angler& a = anglers::get(i);
+    uint8_t buf[7 + ANGLER_NAME_MAX];
+    buf[0] = EVT_ANGLER;
+    buf[1] = (uint8_t)i;
+    buf[2] = (uint8_t)n;
+    buf[3] = (uint8_t)anglers::buttons();
+    buf[4] = a.colour;
+    put16(buf + 5, m.catches[i] > 0xFFFF ? 0xFFFF : (int)m.catches[i]);
+    size_t len = strlen(a.name);
+    memcpy(buf + 7, a.name, len);
+    sendEvent(buf, 7 + len);
+  }
+}
+
+// SET_ANGLER: index:u8, count:u8, colour:u8, name. Send index 0 to count-1 in
+// order; the last one applies the whole set, then the logger sends every
+// ANGLER and a METER. Nothing changes until then, or if any part is bad.
+static void handleSetAngler(const uint8_t* arg, size_t len) {
+  if (len < 4) return sendError(ERR_BAD_LENGTH, "SET_ANGLER needs index, count, colour, name");
+  if (s_status.sending) return sendError(ERR_BUSY, "Busy sending");
+  int index = arg[0], count = arg[1], colour = arg[2];
+  const char* name = (const char*)(arg + 3);
+  size_t nameLen = len - 3;
+  if (index == 0) {
+    s_stagedCount = count;
+    s_stagedNext = 0;
+  }
+  if (count < 1 || count > MAX_ANGLERS || count != s_stagedCount || index != s_stagedNext) {
+    s_stagedCount = 0;
+    return sendError(ERR_BAD_ANGLERS, "Anglers out of order; start again at 0");
+  }
+  if (!anglers::validName(name, nameLen) || colour >= anglers::kColourCount) {
+    s_stagedCount = 0;
+    char why[40];
+    snprintf(why, sizeof(why), "Bad name or colour for angler %d", index + 1);
+    return sendError(ERR_BAD_ANGLERS, why);
+  }
+  memcpy(s_staged[index].name, name, nameLen);
+  s_staged[index].name[nameLen] = 0;
+  s_staged[index].colour = (uint8_t)colour;
+  s_stagedNext++;
+  if (s_stagedNext < s_stagedCount) return;  // more to come
+
+  int n = s_stagedCount;
+  s_stagedCount = 0;
+  char why[48];
+  anglers::SetResult r = anglers::set(s_staged, n, why, sizeof(why));
+  if (r == anglers::SetResult::Invalid) return sendError(ERR_BAD_ANGLERS, why);
+  if (r == anglers::SetResult::SaveFailed) return sendError(ERR_SD, why);
+  tracklog::flush();   // the rebuild reads the files, so they must hold every row
+  trip::rebuildNow();  // catches are counted by name
+  s_anglersChanged = true;
+  snprintf(s_status.lastMsg, sizeof(s_status.lastMsg), "Anglers set");
+  sendAnglers();
+  sendMeter();
+}
+
+bool anglersChanged() {
+  bool c = s_anglersChanged;
+  s_anglersChanged = false;
+  return c;
+}
+
 static void handleCommand(const Cmd& c) {
   if (c.len == 0) return;
   const uint8_t* arg = c.data + 1;
@@ -368,6 +453,10 @@ static void handleCommand(const Cmd& c) {
       return handleMeterReset(arg, argLen);
     case CMD_ERASE_LOGS:
       return handleEraseLogs(arg, argLen);
+    case CMD_GET_ANGLERS:
+      return sendAnglers();
+    case CMD_SET_ANGLER:
+      return handleSetAngler(arg, argLen);
     case CMD_ABORT:
       if (s_status.sending) {
         closeTransfer();

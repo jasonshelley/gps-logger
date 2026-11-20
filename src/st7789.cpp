@@ -98,7 +98,7 @@ void lcdInit() {
   delay(120);
   writeCommand(0x29);  // display on
 
-  lcdSetBacklight(BACKLIGHT_PERCENT);
+  lcdSetBacklight(BACKLIGHT_BRIGHT_PERCENT);
 }
 
 static void setWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2) {

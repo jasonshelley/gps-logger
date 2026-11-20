@@ -11,6 +11,7 @@ Files are read in the order given, as one stream of rows (pass a day's
 """
 import csv
 import math
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -102,11 +103,31 @@ def read_rows(paths):
                 yield r
 
 
+UNDO_RE = re.compile(r"^(.*) undo(?: (\S+))?$", re.IGNORECASE)
+
+
 def meter_for(paths, reset_utc=0):
-    """Returns (distance_m, water_s, jase, matt) for the rows since reset_utc."""
+    """Returns (distance_m, water_s, catches) for the rows since reset_utc.
+
+    catches maps each angler's name (as first written) to their catches since
+    reset_utc, less the ones undone. An undo row ("<name> undo <time>") cancels
+    that angler's catch at that time, or their latest catch if it has no time.
+    """
     m = MoveMeter()
-    jase = matt = 0
+    names = {}    # lower-case name -> name as first written
+    kept = {}     # lower-case name -> times of the catches still counted
     for r in read_rows(paths):
+        if r["type"] == "undo":
+            u = UNDO_RE.match(r["comment"])
+            if not u:
+                continue
+            times = kept.get(u.group(1).lower(), [])
+            when = u.group(2) and parse_time(u.group(2))
+            if when and when in times:
+                times.reverse(); times.remove(when); times.reverse()  # the latest match
+            elif not when and times:
+                times.pop()
+            continue
         if not r["time_utc"]:
             continue
         t = parse_time(r["time_utc"])
@@ -115,14 +136,16 @@ def meter_for(paths, reset_utc=0):
         if r["type"] == "track":
             if r["lat"] and r["lon"] and r["hdop"]:
                 m.add(t, float(r["lat"]), float(r["lon"]), float(r["hdop"]))
-        elif r["type"] == "catch":
-            jase += r["comment"].startswith("Jase")
-            matt += r["comment"].startswith("Matt")
-    return m.distance_m, m.water_s, jase, matt
+        elif r["type"] == "catch" and r["comment"].lower().endswith(" catch"):
+            name = r["comment"][:-6]
+            names.setdefault(name.lower(), name)
+            kept.setdefault(name.lower(), []).append(t)
+    return m.distance_m, m.water_s, {names[k]: len(v) for k, v in kept.items()}
 
 
 if __name__ == "__main__":
     for path in sys.argv[1:]:
-        d, w, j, mt = meter_for([path])
-        print("%s: %.0f m, %d s on the water (%d:%02d), Jase %d, Matt %d" % (
-            path, d, w, w // 3600, w % 3600 // 60, j, mt))
+        d, w, catches = meter_for([path])
+        who = ", ".join("%s %d" % kv for kv in catches.items()) or "no catches"
+        print("%s: %.0f m, %d s on the water (%d:%02d), %s" % (
+            path, d, w, w // 3600, w % 3600 // 60, who))

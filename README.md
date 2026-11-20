@@ -1,6 +1,6 @@
 # ESP32-C6 fishing GPS logger
 
-A handheld GPS logger on a Waveshare ESP32-C6-LCD-1.47. It records the boat's track to an SD card, and two buttons ("Jase" and "Matt") mark each catch. A switch puts it into Transfer mode, where a phone downloads the logs over Bluetooth LE and saves them as GPX.
+A handheld GPS logger on a Waveshare ESP32-C6-LCD-1.47. It records the boat's track to an SD card, and a button per angler marks each catch (hold it to undo). Holding BOOT puts it into Transfer mode, where a phone downloads the logs over Bluetooth LE and saves them as GPX.
 
 - Requirements and decisions: [docs/requirements.md](docs/requirements.md)
 - Bluetooth protocol: [docs/ble-protocol.md](docs/ble-protocol.md)
@@ -13,8 +13,8 @@ A handheld GPS logger on a Waveshare ESP32-C6-LCD-1.47. It records the boat's tr
 |---|---|
 | Waveshare ESP32-C6-LCD-1.47 | ESP32-C6 with in-package flash (the schematic says C6FH4, 4 MB; Jason's unit is a C6FH8, 8 MB). 172 × 320 ST7789 LCD, microSD slot, USB-C. The build uses a 4 MB layout, which runs on either |
 | GPS receiver | Any NMEA receiver at 9600 baud, 8N1 |
-| 2 momentary buttons | "Jase" and "Matt" |
-| 1 two-position switch | Logging / Transfer |
+| 2 momentary buttons | Catch buttons for anglers 1 and 2 (Jase and Matt unless the app renames them) |
+| 1 two-position switch | Optional: Logging / Transfer. Holding BOOT does the same |
 | microSD card | FAT32 |
 | USB power bank | Powers it through the USB-C port |
 
@@ -59,7 +59,7 @@ All three inputs are active low: wire each between its GPIO and GND. The interna
 - GPIO 4 and 5 (labels IO4, IO5): SD CS and MISO, which are also strapping pins. The old sketch had the buttons here.
 - GPIO 6, 7, 14, 15, 21, 22: the LCD. Not on the header.
 - GPIO 8: the RGB LED. Not on the header.
-- GPIO 9 (label BOOT): the BOOT button.
+- GPIO 9 (label BOOT): the BOOT button, used for the details page and switching modes.
 - GPIO 12 and 13 (labels USB_N, USB_P): USB.
 
 IO0, IO20, IO23 and the TXD/RXD pins are spare.
@@ -84,7 +84,14 @@ The first build downloads the pioarduino platform (Arduino core 3.3.12 for the E
 
 - Run `pio` from PowerShell or cmd, not Git Bash. pioarduino's tool installer refuses to run under MSYS/MinGW, and if it doesn't run, the compiler isn't set up (`riscv32-esp-elf-gcc is not recognized`).
 
-A clean build uses about 28% of RAM (91 KB) and 1.07 MB of the 3 MB app partition.
+On this PC, [tools/pio.ps1](tools/pio.ps1) does both: it uses PlatformIO from `C:\pio\venv` with the core in `C:\pio`. From the project folder in PowerShell:
+
+```powershell
+.\tools\pio.ps1 run
+.\tools\pio.ps1 run -t upload --upload-port COM3
+```
+
+A clean build uses about 28% of RAM (92 KB) and 1.23 MB of the 3 MB app partition. Each build writes the git commit to `include/fw_version.h` (not in git) for the details page; a `+` after it means the firmware had uncommitted changes.
 
 Pinned versions (see [platformio.ini](platformio.ini)):
 
@@ -117,7 +124,7 @@ The logger never waits for a computer. It boots and logs the same with or withou
 
 ## Using it
 
-### Logging mode (switch open)
+### Logging mode
 
 The logger reads the GPS and writes a track point:
 
@@ -127,22 +134,30 @@ The logger reads the GPS and writes a track point:
 
 "Moving" means the movement rule in [docs/metrics.md](docs/metrics.md) confirmed a move in the last 2 minutes: the position stayed at least max(25 m, 30 m × HDOP) from where it was for 30 s. The point that completes a move is always logged. GPS speed isn't used, because it reads several km/h when the logger is sitting still indoors. So a logger left on a desk writes one point a minute, however much its position wanders.
 
-Pressing **Jase** or **Matt** writes a catch record straight away at the current position, and shows "Jase catch!" or "Matt catch!" for 3 s. If the current fix is poor, the catch uses the last good fix and records how old it is. The banner turns red with "NOT SAVED" if the card write failed.
+Each catch button belongs to an angler: button 1 is the first angler, button 2 the second (see [Anglers](#anglers)).
+
+- **Press** a catch button: a catch record is written as you let go, at the current position, and a banner in the angler's colour shows their new count for 3 s. If the current fix is poor, the catch uses the last good fix and records how old it is. The banner turns red with "NOT SAVED" if the card write failed.
+- **Hold** a catch button for 2 s: undoes that angler's most recent catch. The grey banner says "undone" with the new count, or "nothing to undo". Holding again undoes the catch before that, back as far as the last trip reset. The catch row stays in the log; an undo row after it cancels it (see [CSV columns](#csv-columns)).
 
 Buffered track points reach the card every 10 s, and also straight away on a catch or a mode switch. A power cut loses at most about 10 s of track.
 
 ### Logger screen
 
-From the top:
+Big numbers in cards, so it reads at a glance and with the backlight dimmed. From the top:
 
-- **Sats arc**: satellites tracked. Green = lock, orange = searching, red = none.
-- **HDOP arc**: a fuller arc means better accuracy. Green when HDOP is 5 or less.
-- Course in degrees and as a compass point, then speed in km/h. These show `--` when HDOP is over 5.
-- Local date and time (Sydney), with AEST or AEDT beside the time.
-- **Trip meter** catches: `Jase n` and `Matt n` since the last reset.
-- **Trip meter** distance and time on the water, for example `Trip 12.4 km  3:25`. A `?` after it means the card couldn't be read to rebuild the meter.
-- Status line: `OK`, `No fix` or `SD error`, plus the points logged today.
-- The border is green while bytes are arriving from the GPS, and red when they've stopped.
+- **Status strip**: a dot and the GPS state on the left (`GPS fix`, `No fix`, `No GPS` or `SD error`), local time (Sydney) on the right.
+- **Catches** for each angler since the trip meter was last reset: names in the anglers' colours over big digits, or a 2 × 2 grid for 3 or 4 anglers.
+- **Trip**: distance moved, then time on the water (h:mm). A `?` after the distance means the card couldn't be read to rebuild the meter.
+- Two half-width cards at the bottom:
+  - **Speed** in km/h, with the course below as a compass point and degrees. These show `--` without a good fix.
+  - **GPS**: satellites tracked, with or without a fix, and HDOP. HDOP shows `--` until there's a fix; it's green at 2 or better, white up to 5, and orange above 5, where speed and course are hidden and moves aren't counted.
+- **The border is the health light**: green while logging, orange with no fix, red when the GPS has gone quiet or the card has failed.
+
+A catch press shows a banner in the angler's colour with their new count for 3 s (red with `NOT SAVED` if the card write failed).
+
+**Backlight:** bright for 30 s after any button press, a mode switch, or while the phone is connected in Transfer mode, then dimmed to save the battery. The levels and the time are in `config.h` (`BACKLIGHT_BRIGHT_PERCENT`, `BACKLIGHT_DIM_PERCENT`, `BACKLIGHT_AWAKE_MS`). If a power bank switches itself off while the screen is dim, raise `BACKLIGHT_DIM_PERCENT`: some banks cut out below 50–100 mA.
+
+**BOOT button** (on the board): a press brightens the screen and, in Logging mode, shows the **details page** for 10 s: date, time with seconds, satellites tracked of visible, HDOP, latitude and longitude, points logged today, card state, when the trip meter was reset, and the firmware's git commit. Holding it for 2 s switches modes (see [Switching modes](#switching-modes)). It never logs anything. (Holding BOOT while resetting still starts the bootloader for flashing.)
 
 The trip meter and today's point count survive a restart, because they're rebuilt from the log files on the card, including files already moved to `/uploaded`.
 
@@ -152,7 +167,7 @@ The trip meter works like a car's: it counts from the last reset until you reset
 
 | Shows | Counts since the reset |
 |---|---|
-| Jase / Matt | catches |
+| each angler | catches, less the ones undone |
 | distance | metres moved |
 | time (h:mm) | time on the water |
 
@@ -160,7 +175,13 @@ Both follow the movement rule in [docs/metrics.md](docs/metrics.md), which the p
 
 The reset time is kept in `/trip.txt` on the card. At boot the logger rebuilds the meter from every log file since that date. The app can reset the meter while it's away from the logger: the reset is sent at the next connection and counts from the moment it was pressed. Details are in [docs/ble-protocol.md](docs/ble-protocol.md#trip-meter-v2).
 
-### Transfer mode (switch closed)
+### Switching modes
+
+**Hold BOOT for 2 s** to switch between Logging and Transfer. The old mode switch still works if it's fitted (closed = Transfer); whichever happened last wins. Without it, the logger boots in Logging mode.
+
+Transfer mode goes back to Logging by itself after 10 minutes with no phone connected (`TRANSFER_IDLE_MS`), so a logger left in Transfer doesn't miss a day's fishing.
+
+### Transfer mode
 
 Logging stops and Bluetooth starts advertising as **GPS Logger**. The screen shows:
 
@@ -171,19 +192,27 @@ Logging stops and Bluetooth starts advertising as **GPS Logger**. The screen sho
 
 Catch buttons are ignored in this mode.
 
+### Anglers
+
+The logger knows up to 4 anglers, each with a name and a colour, in button order. The phone app sets them (BLE `SET_ANGLER`, protocol v4), or the console: `anglers Jase,blue Matt,orange`. They're saved in `/anglers.txt`; without that file the anglers are Jase (blue) and Matt (orange).
+
+- Names are 1–12 characters: letters, digits, spaces, `-`, `.` and `'`. Colours are blue, orange, green, purple, teal and pink.
+- Catches are logged by name (`Sam catch`), and the logger counts a catch for whichever angler has that name now. Renaming an angler starts their count on the logger again; the old name's catches stay in the logs.
+- This board has 2 catch buttons (`ANGLER_BUTTON_PINS` in `config.h`). A 3rd or 4th angler shows on the screen, but needs a button wired before they can log a catch.
+
 ### Phone page
 
 Web Bluetooth only works in **Chrome on Android**, and only on a page served over **HTTPS** (or from `localhost`). It doesn't work on iPhone.
 
 1. Open the hosted page in Chrome on the phone.
-2. Put the logger's switch on Transfer.
+2. Hold the logger's BOOT button for 2 s to switch to Transfer.
 3. Tap **Connect** and pick **GPS Logger**.
 4. Tap **Download all**, or **Download** on a single file. Tick **Also save the raw CSV** if you want the CSV as well as the GPX.
 
 For each file, the page:
 
 1. downloads the file and checks its CRC-32
-2. converts it to GPX: track points, split into segments at gaps over 15 min, plus a waypoint named "Jase catch" or "Matt catch" for each catch
+2. converts it to GPX: track points, split into segments at gaps over 15 min, plus a waypoint named after the angler ("Jase catch") for each catch, leaving out catches undone in the same file
 3. saves the files to Downloads
 4. tells the logger, which moves the file to `/uploaded` on the card
 
@@ -205,6 +234,7 @@ To test a change locally before pushing, serve `web/` from the PC, for example w
 | `/gpsnodate.csv` | Only if a catch was pressed before the GPS had ever given the date |
 | `/uploaded/` | Files the phone has confirmed |
 | `/trip.txt` | The trip meter's reset time (`reset_utc=<seconds>`), written when the app resets the meter or erases the logs. Kept by `rm *` |
+| `/anglers.txt` | The anglers in button order, one `name,colour` per line, written when the app sets them. Optional; kept by `rm *` and `erase-logs` |
 | `/readme.txt` | Optional. Printed to the console at boot, and kept by `rm *` |
 
 Each record goes in the file for its own local date, so a trip past midnight splits across two files. Times inside the file are UTC.
@@ -215,7 +245,7 @@ The file starts with a header row. Fields have no quoting and there's no trailin
 
 | Column | Example | Notes |
 |---|---|---|
-| `type` | `track` | `track` or `catch` |
+| `type` | `track` | `track`, `catch` or `undo` |
 | `time_utc` | `2026-11-11T08:15:02Z` | ISO 8601 UTC. For a catch, the time of the press |
 | `lat` | `-33.865143` | degrees, 6 dp |
 | `lon` | `151.209900` | degrees, 6 dp |
@@ -228,9 +258,11 @@ The file starts with a header row. Fields have no quoting and there's no trailin
 | `fix_quality` | `1` | GGA quality: 0 none, 1 GPS, 2 DGPS, … |
 | `fix_mode` | `A` | RMC mode: A autonomous, D differential, E estimated, N none |
 | `fix_age_s` | `2` | Catches only: how old the fix used for the position was, in seconds. `0` = current fix. Empty for track points |
-| `comment` | `Jase catch` | `Jase catch` or `Matt catch` on catch rows, empty on track rows |
+| `comment` | `Jase catch` | `<name> catch` on catch rows; `<name> undo <time_utc of the catch>` on undo rows (just `<name> undo` if that catch had no time); empty on track rows |
 
 A catch made with no fix since boot (and none in today's file) has an empty position. The GPX has no waypoint for it, and the page says so.
+
+An **undo** row cancels one earlier catch: the one by the same angler at the time in its comment, or that angler's latest catch if there's no time. It has a time (when it was undone) but no position. It goes in the file for its own date, so an undo after midnight can be in the next day's file from the catch it cancels.
 
 ## Serial console
 
@@ -244,11 +276,21 @@ USB serial at 115200 baud. Type a command and press Enter. Lines over 96 charact
 | `cat <file>` | Prints a file |
 | `tail <file> [n]` | Prints the last n lines (default 10) |
 | `rm <file>` | Deletes a file |
-| `rm *` | Deletes every file in `/` except `readme.txt` and `trip.txt`, after you type `yes` |
+| `rm *` | Deletes every file in `/` except `readme.txt`, `trip.txt` and `anglers.txt`, after you type `yes` |
 | `erase-logs` | Deletes every log file in `/` and `/uploaded` and zeroes the trip meter, after you type `yes`. The same as the app's "reset all the data" (BLE `ERASE_LOGS`) |
 | `df` | Card size, used and free |
+| `anglers` | Lists the anglers in button order, with their colours and catches this trip |
+| `anglers <name,colour> ...` | Sets 1–4 anglers, for example `anglers Jase,blue Matt,orange Sam,green`. The same as the app's `SET_ANGLER`. Names can't have spaces here (the app's can) |
 
 File names without a leading `/` are in the root folder, for example `cat uploaded/gps20261111.csv`.
+
+[tools/console.py](tools/console.py) runs commands from PowerShell without a serial monitor. It finds the logger by its USB ID (or takes `--port`). Opening the port resets the board, so it waits for the boot banner first:
+
+```powershell
+C:\pioenv\Scripts\python.exe tools\console.py status "tail trip.txt 5"
+```
+
+`--watch 120 --every 30` keeps printing for 2 minutes and sends `status` every 30 s; `--watch 15` on its own just shows the boot log. It doesn't answer `yes` for you: add `yes` as the next command if you mean it.
 
 ## Project layout
 
@@ -270,13 +312,17 @@ src/storage.*           SD mount/retry, listing, move to /uploaded
 src/ble_transfer.*      NimBLE GATT transfer service
 src/crc32.*             CRC-32 shared with the phone page
 src/console.*           USB serial console
-src/inputs.*            debounced buttons and switch
+src/inputs.*            debounced buttons (press and hold) and switch
+src/anglers.*           anglers' names and colours (/anglers.txt), catch and undo comments
 web/index.html          phone page (Web Bluetooth, CSV → GPX)
 docs/                   requirements, BLE protocol, movement and trip metrics
 test/test_metrics/      native unit tests for the movement rule
 test-data/              log fixtures for those tests (see its README)
 tools/metrics.py        reference implementation of docs/metrics.md
 tools/make_fixtures.py  makes the fixtures in test-data/
+tools/pio.ps1           runs PlatformIO with this PC's settings
+tools/fw_version.py     build step: puts the git commit in include/fw_version.h
+tools/console.py        runs serial console commands from the command line
 ```
 
 ## Tests

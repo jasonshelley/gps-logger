@@ -29,4 +29,8 @@ void loop(uint32_t nowMs);
 
 const Status& status();
 
+// True once after the phone changed the anglers (SET_ANGLER). The trip meter
+// has already been rebuilt; the caller updates today's numbers and the screen.
+bool anglersChanged();
+
 }  // namespace bletx

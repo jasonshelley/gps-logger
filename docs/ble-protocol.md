@@ -1,10 +1,10 @@
 # Bluetooth LE transfer protocol
 
-Version 3. The firmware side is in `src/ble_transfer.cpp`. The phone side is in `web/index.html` (file transfer only) and the Android app in `app/`.
+Version 4. The firmware side is in `src/ble_transfer.cpp`. The phone side is in `web/index.html` (file transfer only) and the Android app in `app/`.
 
-Version 2 added the trip meter commands (METER, METER_RESET and the METER event). Version 3 adds ERASE_LOGS and the ERASED event. Every earlier message is unchanged, so an older client works with a newer logger. See [Version history](#version-history).
+Version 2 added the trip meter commands (METER, METER_RESET and the METER event). Version 3 added ERASE_LOGS and the ERASED event. Version 4 adds the anglers: GET_ANGLERS, SET_ANGLER and the ANGLER event. Every earlier message is unchanged, so an older client works with a newer logger. See [Version history](#version-history).
 
-The logger is a GATT server that advertises only in Transfer mode, as `GPS Logger`. One phone can connect at a time. There is no pairing or bonding, so anyone within range can connect while the switch is on Transfer.
+The logger is a GATT server that advertises only in Transfer mode, as `GPS Logger`. One phone can connect at a time. There is no pairing or bonding, so anyone within range can connect while the logger is in Transfer mode.
 
 ## Service and characteristics
 
@@ -34,20 +34,23 @@ Every message starts with a one-byte opcode. Integers are unsigned little-endian
 | `0x06` | METER (v2) | none | METER |
 | `0x07` | METER_RESET (v2) | `reset:u32` (UTC seconds since 1970) | METER, or ERROR |
 | `0x08` | ERASE_LOGS (v3) | the 4 ASCII bytes `ERAS` (`45 52 41 53`) | ERASED then METER, or ERROR. See [Erasing the logs](#erasing-the-logs-v3) |
+| `0x09` | GET_ANGLERS (v4) | none | one ANGLER per angler. See [Anglers](#anglers-v4) |
+| `0x0A` | SET_ANGLER (v4) | `index:u8`, `count:u8`, `colour:u8`, `name` | nothing until the last one; then one ANGLER per angler and a METER, or ERROR |
 
 ### Events (TX → phone)
 
 | Op | Name | Payload |
 |---|---|---|
-| `0x81` | HELLO | `version:u8` (3), `chunk:u16` (data bytes per DATA message at the current MTU) |
+| `0x81` | HELLO | `version:u8` (4), `chunk:u16` (data bytes per DATA message at the current MTU) |
 | `0x82` | FILE | `size:u32`, `name` |
 | `0x83` | LIST_END | `count:u16` |
 | `0x84` | BEGIN | `size:u32`, `name` |
 | `0x90` | DATA | `offset:u32`, then file bytes |
 | `0x85` | END | `size:u32`, `crc:u32` |
 | `0x86` | CONFIRMED | `name` (now in `/uploaded`) |
-| `0x87` | METER (v2) | `reset:u32`, `jase:u16`, `matt:u16`, `distance_m:u32`, `water_s:u32`, `flags:u8`. 18 bytes. See [Trip meter](#trip-meter-v2) |
+| `0x87` | METER (v2) | `reset:u32`, `catches1:u16`, `catches2:u16`, `distance_m:u32`, `water_s:u32`, `flags:u8`. 18 bytes. See [Trip meter](#trip-meter-v2) |
 | `0x88` | ERASED (v3) | `deleted:u16`, `failed:u16`, `flags:u8`. 6 bytes. See [Erasing the logs](#erasing-the-logs-v3) |
+| `0x89` | ANGLER (v4) | `index:u8`, `count:u8`, `buttons:u8`, `colour:u8`, `catches:u16`, `name`. At most 19 bytes. See [Anglers](#anglers-v4) |
 | `0xEE` | ERROR | `code:u8`, then a short ASCII message |
 
 ### Error codes
@@ -64,6 +67,7 @@ Every message starts with a one-byte opcode. Integers are unsigned little-endian
 | 8 | Moving the file to `/uploaded` failed, so the file is kept |
 | 9 | Message too short |
 | 10 | ERASE_LOGS without the bytes `ERAS` (v3). Nothing was erased |
+| 11 | SET_ANGLER with a bad name or colour, a count outside 1–4, an index out of order, or two anglers with the same name (v4). Nothing changed; start again at index 0 |
 
 ## Which files
 
@@ -116,7 +120,7 @@ From the reset time `reset` (UTC) onwards:
 
 | Field | Meaning |
 |---|---|
-| `jase`, `matt` | Catch rows whose `time_utc` is at or after `reset` |
+| `catches1`, `catches2` | Anglers 1 and 2: catch rows whose `time_utc` is at or after `reset`, less the ones undone. ANGLER events carry every angler's count (v4) |
 | `distance_m` | Metres moved, by the movement rule in [metrics.md](metrics.md) |
 | `water_s` | Time on the water in seconds, by the same rule |
 
@@ -145,13 +149,13 @@ The logger flushes its log buffer, saves `reset` to `/trip.txt`, rebuilds the me
 |---|---|---|---|
 | 0 | op | u8 | `0x87` |
 | 1 | `reset` | u32 | The reset time in force, UTC seconds. 0 = never reset |
-| 5 | `jase` | u16 | Jase's catches since `reset` (stops at 65535) |
-| 7 | `matt` | u16 | Matt's catches since `reset` (stops at 65535) |
+| 5 | `catches1` | u16 | Angler 1's catches since `reset` (stops at 65535). v2 and v3 called it `jase` |
+| 7 | `catches2` | u16 | Angler 2's catches since `reset`, 0 if there's only one angler. v2 and v3 called it `matt` |
 | 9 | `distance_m` | u32 | Metres, rounded |
 | 13 | `water_s` | u32 | Seconds |
 | 17 | `flags` | u8 | bit 0: **incomplete**. The card couldn't be read for the last rebuild, so the numbers may be low; the logger retries when the card is back. bit 1: **clock not set**. The logger hasn't had GPS time since boot. Other bits are 0 |
 
-Example: reset 2026-11-11 08:00:00 UTC (`1794384000`), Jase 3, Matt 1, 12 345 m, 3 h 25 min (12 300 s), no flags:
+Example: reset 2026-11-11 08:00:00 UTC (`1794384000`), angler 1 (Jase) 3, angler 2 (Matt) 1, 12 345 m, 3 h 25 min (12 300 s), no flags:
 
 ```
 87 80 20 f4 6a 03 00 01 00 39 30 00 00 0c 30 00 00 00
@@ -227,6 +231,58 @@ Example: 4 files erased, none failed, then the meter reset to 2026-11-11 08:00:0
 
 The console has the same erase for bench use: `erase-logs`, then `yes`.
 
+## Anglers (v4)
+
+The logger knows 1 to 4 anglers, in button order: button 1 logs catches for angler 1 (index 0). Each has a name and a colour. They're kept on the card in `/anglers.txt`; without it they're Jase (blue) and Matt (orange). The screen shows each angler's catches since the trip reset, with the name in their colour.
+
+**Names** are 1–12 ASCII characters: letters, digits, spaces, `-`, `.` and `'`, with no space at either end. Two anglers can't have the same name (ignoring case).
+
+**Colours:**
+
+| Value | Colour | RGB |
+|---|---|---|
+| 0 | blue | `#2196F3` |
+| 1 | orange | `#FF5722` |
+| 2 | green | `#4CAF50` |
+| 3 | purple | `#9C27B0` |
+| 4 | teal | `#009688` |
+| 5 | pink | `#E91E63` |
+
+### The ANGLER event
+
+GET_ANGLERS, and a successful SET_ANGLER, send one ANGLER per angler, index 0 first. Each fits a 20-byte notification, so it works at the default MTU.
+
+| Offset | Field | Type | Notes |
+|---|---|---|---|
+| 0 | op | u8 | `0x89` |
+| 1 | `index` | u8 | 0-based, in button order |
+| 2 | `count` | u8 | How many anglers there are, so the client knows when it has them all |
+| 3 | `buttons` | u8 | How many catch buttons the logger has (2 on this board). An angler with `index >= buttons` is shown but can't log a catch yet |
+| 4 | `colour` | u8 | See the table above |
+| 5 | `catches` | u16 | This angler's catches since the trip reset, less the ones undone (stops at 65535) |
+| 7 | `name` | ASCII | The rest of the message, 1–12 bytes |
+
+### SET_ANGLER
+
+Send one SET_ANGLER per angler, index 0 to count − 1, in order: `index:u8`, `count:u8`, `colour:u8`, then the name. Each fits a 20-byte write. Index 0 starts a new set. The logger checks each one as it arrives and replies ERROR 11 straight away if one is bad; the set is then dropped, and nothing has changed.
+
+When the last one arrives, the logger saves the set to `/anglers.txt`, recounts the trip meter, and replies with an ANGLER for each angler and then a METER. If the card can't be written, it replies ERROR 5 and the old anglers stay. A file being sent (ERROR 4) also rejects it.
+
+**Catches belong to a name.** The logs say `Jase catch`, so the logger counts a catch for whichever angler has that name now. Renaming an angler starts their count on the logger again; the old name's catches stay in the logs under the old name.
+
+Example: set Jase (blue) and Sam (green):
+
+```
+0a 00 02 00 4a 61 73 65     SET_ANGLER index 0, count 2, blue, "Jase"
+0a 01 02 02 53 61 6d        SET_ANGLER index 1, count 2, green, "Sam"
+```
+
+The logger replies `89 00 02 02 00 03 00 4a 61 73 65` (Jase, 3 catches), `89 01 02 02 02 00 00 53 61 6d` (Sam, none yet), then METER.
+
+### Undo
+
+Holding a catch button for 2 s undoes that angler's latest catch since the trip reset. The logger appends an `undo` row whose comment names the catch: `Jase undo 2026-11-20T03:12:44Z`, or `Jase undo` when that catch had no time. The catch row stays. Every count the logger sends (METER, ANGLER) already leaves undone catches out. A client reading the CSV must do the same: an undo row cancels that angler's catch at that time, or their latest catch if there's no time. The undo can be in a later file than the catch, if it was made after midnight. See README "CSV columns".
+
 ## Version history
 
 | Version | Change |
@@ -235,6 +291,7 @@ The console has the same erase for bench use: `erase-logs`, then `yes`.
 | 2 | Trip meter: METER (`0x06`), METER_RESET (`0x07`), METER event (`0x87`). Nothing in v1 changed. A client can check `version >= 2` in HELLO before using the meter, since a v1 logger answers METER with ERROR 1 (unknown command) |
 | 2 (revised) | `distance_m` and `water_s` now follow the movement rule in [metrics.md](metrics.md) instead of summing every pair of consecutive points, which counted GPS jitter. The message formats didn't change, so the version number didn't either. A logger with the earlier firmware reports the larger, jitter-inflated figures |
 | 3 | ERASE_LOGS (`0x08`) and the ERASED event (`0x88`), and error 10. Nothing in v1 or v2 changed. Check `version >= 3` in HELLO before sending ERASE_LOGS: a v2 logger answers it with ERROR 1 (unknown command) |
+| 4 | Anglers: GET_ANGLERS (`0x09`), SET_ANGLER (`0x0A`), the ANGLER event (`0x89`) and error 11. METER's layout is unchanged, but its two counts are now anglers 1 and 2, whatever their names. Logs can hold `undo` rows, and every count leaves undone catches out. Check `version >= 4` in HELLO before sending GET_ANGLERS or SET_ANGLER: a v3 logger answers them with ERROR 1 |
 
 ## Flow control
 

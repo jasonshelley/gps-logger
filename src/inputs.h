@@ -1,25 +1,36 @@
 #pragma once
-// Debounced catch buttons and mode switch. All inputs are active low with
-// internal pull-ups.
+// Debounced buttons and mode switch. All inputs are active low with pull-ups.
 
 #include <stdint.h>
 
+// A button with two gestures:
+//   press: released before holdMs. Reported on release.
+//   hold:  held for holdMs. Reported once, while still held; the release that
+//          follows reports nothing.
 class Button {
  public:
-  Button(uint8_t pin, uint32_t debounceMs);
+  Button(uint8_t pin, uint32_t debounceMs, uint32_t holdMs);
   void begin();
   void update(uint32_t nowMs);
-  // True once per press: after the pin has been low for the debounce time.
-  // Re-arms only after the button has been released (high for the debounce time).
+  // True once per short press, when it's released.
   bool takePress();
+  // True once per hold, as soon as it reaches holdMs.
+  bool takeHold();
+  // Down right now (debounced).
+  bool isDown() const { return stableLow_; }
 
  private:
   uint8_t pin_;
   uint32_t debounceMs_;
+  uint32_t holdMs_;
   bool rawLow_ = false;
   bool stableLow_ = false;
+  bool armed_ = false;   // went down after begin(): a button held at boot reports nothing
+  bool held_ = false;    // this press already reported a hold
   uint32_t changedAt_ = 0;
-  bool pressed_ = false;
+  uint32_t downAt_ = 0;
+  bool press_ = false;
+  bool hold_ = false;
 };
 
 enum class Mode : uint8_t { Logging, Transfer };

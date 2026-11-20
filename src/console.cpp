@@ -3,12 +3,14 @@
 #include <Arduino.h>
 #include <SD.h>
 
+#include "anglers.h"
 #include "clock.h"
 #include "config.h"
 #include "gps.h"
 #include "storage.h"
 #include "track_logger.h"
 #include "trip_meter.h"
+#include "ui.h"
 
 namespace console {
 
@@ -27,9 +29,12 @@ static void printHelp() {
       "  cat <file>           print a file\n"
       "  tail <file> [n]      print the last n lines (default 10)\n"
       "  rm <file>            delete a file\n"
-      "  rm *                 delete every file in / except readme.txt and trip.txt (asks first)\n"
+      "  rm *                 delete every file in / except readme.txt, trip.txt and anglers.txt (asks first)\n"
       "  erase-logs           delete every log file in / and /uploaded and zero the trip meter (asks first)\n"
       "  df                   card size and free space\n"
+      "  anglers              list the anglers (button order) and their catches this trip\n"
+      "  anglers <name,colour> ...  set 1-4 anglers, e.g. anglers Jase,blue Matt,orange\n"
+      "                       (names without spaces here; colours: blue orange green purple teal pink)\n"
       "Files without a leading / are in the root folder.");
 }
 
@@ -62,14 +67,19 @@ static void cmdStatus() {
                 storage::mounted() ? "mounted" : "NOT mounted", tracklog::lastWriteOk() ? "OK" : "FAILED",
                 (unsigned long)tracklog::buffered(), (unsigned long)tracklog::droppedRows());
   const DayStats& st = tracklog::stats();
-  if (st.known)
-    Serial.printf("Today %s: %lu points, %.0f m, Jase %lu, Matt %lu\n", st.date, (unsigned long)st.points,
-                  st.distanceM, (unsigned long)st.jase, (unsigned long)st.matt);
+  if (st.known) {
+    Serial.printf("Today %s: %lu points, %.0f m,", st.date, (unsigned long)st.points, st.distanceM);
+    for (int i = 0; i < anglers::count(); i++)
+      Serial.printf(" %s %lu", anglers::get(i).name, (unsigned long)st.catches[i]);
+    Serial.println();
+  }
   const trip::Meter& tm = trip::meter();
   char since[24] = "the start";
   if (tm.resetUtc) clk::formatIsoUtc(tm.resetUtc, since, sizeof(since));
-  Serial.printf("Trip since %s: Jase %lu, Matt %lu, %.0f m, %lu min on the water%s\n", since,
-                (unsigned long)tm.jase, (unsigned long)tm.matt, tm.distanceM, (unsigned long)(tm.waterS / 60),
+  Serial.printf("Trip since %s:", since);
+  for (int i = 0; i < anglers::count(); i++)
+    Serial.printf(" %s %lu,", anglers::get(i).name, (unsigned long)tm.catches[i]);
+  Serial.printf(" %.0f m, %lu min on the water%s\n", tm.distanceM, (unsigned long)(tm.waterS / 60),
                 tm.complete ? "" : " (incomplete: card not read)");
   Serial.printf("Uptime %lu s, free heap %lu bytes\n", (unsigned long)(now / 1000),
                 (unsigned long)ESP.getFreeHeap());
@@ -149,7 +159,7 @@ static void cmdTail(const char* name, int lines) {
 static void cmdRm(const char* name) {
   if (!needCard()) return;
   if (strcmp(name, "*") == 0) {
-    Serial.println("Delete every file in / except readme.txt and trip.txt? Type 'yes' to confirm:");
+    Serial.println("Delete every file in / except readme.txt, trip.txt and anglers.txt? Type 'yes' to confirm:");
     s_awaitConfirmRmAll = true;
     return;
   }
@@ -165,8 +175,9 @@ static void rmAll() {
   static char names[64][32];
   int count = 0;
   storage::listFiles("/", false, [&](const char* name, size_t) {
-    // trip.txt holds the trip meter's reset time; it's a setting, not a log.
-    if (count < 64 && strcasecmp(name, "readme.txt") != 0 && strcasecmp(name, "trip.txt") != 0)
+    // trip.txt and anglers.txt are settings, not logs.
+    if (count < 64 && strcasecmp(name, "readme.txt") != 0 && strcasecmp(name, "trip.txt") != 0 &&
+        strcasecmp(name, "anglers.txt") != 0)
       snprintf(names[count++], 32, "%s", name);
   });
   for (int i = 0; i < count; i++) {
@@ -196,6 +207,49 @@ static void cmdDf() {
                 (total - used) >> 20);
 }
 
+static void listAnglers() {
+  const trip::Meter& tm = trip::meter();
+  for (int i = 0; i < anglers::count(); i++) {
+    const anglers::Angler& a = anglers::get(i);
+    Serial.printf("  %d  %-12s %-7s %lu this trip%s\n", i + 1, a.name, anglers::colourName(a.colour),
+                  (unsigned long)tm.catches[i], i < anglers::buttons() ? "" : " (no button)");
+  }
+}
+
+// "anglers Jase,blue Matt,orange": the same as the app's SET_ANGLER.
+static void setAnglers(char* args) {
+  anglers::Angler list[MAX_ANGLERS];
+  int n = 0;
+  for (char* t = strtok(args, " \t"); t; t = strtok(nullptr, " \t")) {
+    char* comma = strchr(t, ',');
+    if (n == MAX_ANGLERS || !comma) {
+      Serial.printf("Usage: anglers <name,colour> ... (1 to %d)\n", MAX_ANGLERS);
+      return;
+    }
+    *comma = 0;
+    snprintf(list[n].name, sizeof(list[n].name), "%.*s", ANGLER_NAME_MAX, t);
+    int c = -1;
+    for (int k = 0; k < anglers::kColourCount; k++)
+      if (strcasecmp(comma + 1, anglers::colourName(k)) == 0) c = k;
+    if (c < 0) {
+      Serial.printf("Unknown colour '%s'\n", comma + 1);
+      return;
+    }
+    list[n++].colour = (uint8_t)c;
+  }
+  char why[48];
+  anglers::SetResult r = anglers::set(list, n, why, sizeof(why));
+  if (r != anglers::SetResult::Applied) {
+    Serial.println(why);
+    return;
+  }
+  tracklog::flush();
+  trip::rebuildNow();
+  tracklog::anglersChanged();
+  ui::anglersChanged();
+  listAnglers();
+}
+
 static void runLine(char* line) {
   if (s_awaitConfirmErase) {
     s_awaitConfirmErase = false;
@@ -207,6 +261,15 @@ static void runLine(char* line) {
     s_awaitConfirmRmAll = false;
     if (strcmp(line, "yes") == 0) rmAll();
     else Serial.println("Cancelled");
+    return;
+  }
+
+  // "anglers" takes up to four arguments, more than the tokens below hold.
+  if (!strncmp(line, "anglers", 7) && (line[7] == 0 || line[7] == ' ')) {
+    char* args = line + 7;
+    while (*args == ' ') args++;
+    if (*args) setAnglers(args);
+    else listAnglers();
     return;
   }
 

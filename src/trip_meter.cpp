@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "anglers.h"
 #include "clock.h"
 #include "config.h"
 #include "log_reader.h"
@@ -21,6 +22,11 @@ static bool s_needRebuild = false;
 // Distance and time on the water, from the track points since the reset (docs/metrics.md).
 static movemeter::Meter s_move;
 
+// Each angler's recent catch times since the reset, oldest first, for undo.
+// Only the last kRecentMax are kept; older catches still count but can't be undone.
+static const size_t kRecentMax = 50;
+static std::vector<time_t> s_recent[MAX_ANGLERS];
+
 // ---- Accumulating ----
 
 static void addTrackPoint(time_t utc, double lat, double lng, double hdop) {
@@ -32,10 +38,41 @@ static void addTrackPoint(time_t utc, double lat, double lng, double hdop) {
 
 void onTrackPoint(time_t utc, double lat, double lng, double hdop) { addTrackPoint(utc, lat, lng, hdop); }
 
-void onCatch(Angler who, time_t utc) {
+static void addCatch(int a, time_t utc) {
+  if (a < 0 || a >= MAX_ANGLERS) return;
   if (utc != 0 && utc < s_meter.resetUtc) return;
-  if (who == Angler::Jase) s_meter.jase++;
-  else s_meter.matt++;
+  s_meter.catches[a]++;
+  s_recent[a].push_back(utc);
+  if (s_recent[a].size() > kRecentMax) s_recent[a].erase(s_recent[a].begin());
+}
+
+// An undo row: removes the catch made at 'catchUtc', or the angler's latest
+// catch when the undo names no time (that catch had none either).
+static void addUndo(int a, time_t catchUtc) {
+  if (a < 0 || a >= MAX_ANGLERS) return;
+  std::vector<time_t>& r = s_recent[a];
+  if (catchUtc == 0) {
+    if (r.empty()) return;
+    r.pop_back();
+  } else {
+    if (catchUtc < s_meter.resetUtc) return;  // before the reset: never counted
+    auto it = std::find(r.rbegin(), r.rend(), catchUtc);
+    if (it != r.rend()) r.erase(std::next(it).base());
+  }
+  if (s_meter.catches[a] > 0) s_meter.catches[a]--;
+}
+
+void onCatch(int angler, time_t utc) { addCatch(angler, utc); }
+
+bool lastCatch(int angler, time_t& utc) {
+  if (angler < 0 || angler >= MAX_ANGLERS || s_recent[angler].empty()) return false;
+  utc = s_recent[angler].back();
+  return true;
+}
+
+void onUndo(int angler) {
+  time_t utc;
+  if (lastCatch(angler, utc)) addUndo(angler, utc);
 }
 
 // ---- The reset file ----
@@ -91,6 +128,14 @@ static bool dayFromName(const char* name, char* day) {
 
 static void scanFile(const char* path) {
   forEachLogRow(path, [](char** f) {
+    char name[ANGLER_NAME_MAX + 2];
+    if (strcmp(f[COL_TYPE], "undo") == 0) {
+      // Undo rows count whatever their own time: they name the catch they undo.
+      time_t catchUtc;
+      if (anglers::parseUndo(f[COL_COMMENT], name, sizeof(name), catchUtc))
+        addUndo(anglers::find(name), catchUtc);
+      return;
+    }
     if (!*f[COL_TIME]) return;  // no time: can't tell whether it's after the reset
     time_t t = clk::parseIsoUtc(f[COL_TIME]);
     if (t == 0) return;
@@ -98,8 +143,7 @@ static void scanFile(const char* path) {
       if (!*f[COL_LAT] || !*f[COL_LON] || !*f[COL_HDOP]) return;
       addTrackPoint(t, atof(f[COL_LAT]), atof(f[COL_LON]), atof(f[COL_HDOP]));
     } else if (strcmp(f[COL_TYPE], "catch") == 0 && t >= s_meter.resetUtc) {
-      if (strncmp(f[COL_COMMENT], "Jase", 4) == 0) s_meter.jase++;
-      else if (strncmp(f[COL_COMMENT], "Matt", 4) == 0) s_meter.matt++;
+      if (anglers::parseCatch(f[COL_COMMENT], name, sizeof(name))) addCatch(anglers::find(name), t);
     }
   });
 }
@@ -109,6 +153,7 @@ static void rebuild() {
   s_meter = Meter();
   s_meter.resetUtc = reset;
   s_move.clear();
+  for (auto& r : s_recent) r.clear();
 
   if (!storage::mounted()) {
     s_needRebuild = true;
@@ -142,10 +187,14 @@ static void rebuild() {
     scanFile(path);
   }
   s_meter.complete = true;
-  Serial.printf("[trip] since %lld: Jase %lu, Matt %lu, %.0f m, %lu s on the water (%u file day(s), %lu ms)\n",
-                (long long)reset, (unsigned long)s_meter.jase, (unsigned long)s_meter.matt, s_meter.distanceM,
+  Serial.printf("[trip] since %lld:", (long long)reset);
+  for (int i = 0; i < anglers::count(); i++)
+    Serial.printf(" %s %lu,", anglers::get(i).name, (unsigned long)s_meter.catches[i]);
+  Serial.printf(" %.0f m, %lu s on the water (%u file day(s), %lu ms)\n", s_meter.distanceM,
                 (unsigned long)s_meter.waterS, (unsigned)days.size(), (unsigned long)(millis() - started));
 }
+
+void rebuildNow() { rebuild(); }
 
 // ---- Public ----
 

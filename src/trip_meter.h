@@ -2,7 +2,8 @@
 // Trip meter, like a car's: counts from a reset time until the next reset.
 //
 // Counts, since the reset time (UTC):
-//   - catches per angler (catch rows at or after the reset time)
+//   - catches per angler (catch rows at or after the reset time, less the
+//     ones undone), matched to the anglers by name (anglers.h)
 //   - distance moved, in metres
 //   - time on the water, in seconds
 // Distance and time follow the movement rule in docs/metrics.md (move_meter.h),
@@ -17,13 +18,13 @@
 #include <stdint.h>
 #include <time.h>
 
-#include "track_logger.h"
+#include "config.h"
 
 namespace trip {
 
 struct Meter {
   time_t resetUtc = 0;   // 0 = never reset: counts every log on the card
-  uint32_t jase = 0, matt = 0;
+  uint32_t catches[MAX_ANGLERS] = {};  // by angler, in button order
   double distanceM = 0;
   uint32_t waterS = 0;
   bool complete = false; // false if the card couldn't be read for the last rebuild
@@ -40,7 +41,17 @@ void tick();
 // Live updates, called by the track logger for each row it logs.
 // Pass lat, lng and hdop as written to the log, so the live meter matches a rebuild.
 void onTrackPoint(time_t utc, double lat, double lng, double hdop);
-void onCatch(Angler who, time_t utc);  // utc 0 if the clock isn't set yet (still counts)
+void onCatch(int angler, time_t utc);  // utc 0 if the clock isn't set yet (still counts)
+
+// The angler's most recent catch that can still be undone: one since the
+// reset, not undone already, and among the last few dozen. False if none.
+// 'utc' is that catch's time (0 if it had none).
+bool lastCatch(int angler, time_t& utc);
+// Undoes the catch lastCatch() returned (call after logging the undo row).
+void onUndo(int angler);
+
+// Rebuilds from the logs, e.g. after the anglers change. Flush the log buffer first.
+void rebuildNow();
 
 enum class ResetResult { Applied, Unchanged, SaveFailed };
 

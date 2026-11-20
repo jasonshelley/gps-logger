@@ -2,12 +2,15 @@
 
 #include <Arduino.h>
 
-Button::Button(uint8_t pin, uint32_t debounceMs) : pin_(pin), debounceMs_(debounceMs) {}
+Button::Button(uint8_t pin, uint32_t debounceMs, uint32_t holdMs)
+    : pin_(pin), debounceMs_(debounceMs), holdMs_(holdMs) {}
 
 void Button::begin() {
   pinMode(pin_, INPUT_PULLUP);
   rawLow_ = stableLow_ = digitalRead(pin_) == LOW;
-  // A button held down at boot doesn't count as a press.
+  // A button held down at boot (BOOT held for the bootloader, say) reports
+  // nothing until it has been released and pressed again.
+  armed_ = false;
   changedAt_ = millis();
 }
 
@@ -19,14 +22,31 @@ void Button::update(uint32_t nowMs) {
   }
   if (rawLow_ != stableLow_ && nowMs - changedAt_ >= debounceMs_) {
     stableLow_ = rawLow_;
-    if (stableLow_) pressed_ = true;
+    if (stableLow_) {
+      armed_ = true;
+      held_ = false;
+      downAt_ = nowMs;
+    } else if (armed_) {
+      if (!held_) press_ = true;
+      armed_ = false;
+    }
+  }
+  if (stableLow_ && armed_ && !held_ && nowMs - downAt_ >= holdMs_) {
+    held_ = true;
+    hold_ = true;
   }
 }
 
 bool Button::takePress() {
-  bool p = pressed_;
-  pressed_ = false;
+  bool p = press_;
+  press_ = false;
   return p;
+}
+
+bool Button::takeHold() {
+  bool h = hold_;
+  hold_ = false;
+  return h;
 }
 
 ModeSwitch::ModeSwitch(uint8_t pin, uint32_t debounceMs) : pin_(pin), debounceMs_(debounceMs) {}
