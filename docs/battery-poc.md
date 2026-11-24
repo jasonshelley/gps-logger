@@ -7,7 +7,8 @@ This is the bench version of the power design in the sealed-box draft (`docs/har
 ## The short version
 
 - **Two 18650 cells in parallel** (1S2P): one 3.7 V cell with double the capacity. Not series.
-- **Charger: Adafruit bq24074 Universal USB/DC/Solar charger** (Adafruit 4755: about A$50 on Amazon AU, or A$28 from Core Electronics). It has USB-C on the board and load sharing, and it's the same charger the sealed box uses, so nothing is thrown away.
+- **Charger: Adafruit bq24074 Universal USB/DC/Solar charger** (Adafruit 4755, about A$28 from Core Electronics). It has USB-C on the board and load sharing, and it's the same charger the sealed box uses, so nothing is thrown away.
+- **Fastest from Amazon AU (1–3 days):** a USB-C TP4056 board with protection built in instead. It works, but you have to switch the logger off to charge it. See [Parts list](#parts-list).
 - **Protection:** a small 1S protection board between the cells and the charger. The bq24074 doesn't cut the battery off when it's flat.
 - **Supply:** the charger's OUT goes through an on/off switch straight to the logger's **5V** header pin. No boost converter and no buck converter. The board's own 3.3 V regulator does the rest.
 - **Runtime:** roughly 30–60 hours, against 12–20 h for the 2400 mAh LiPo in the box draft.
@@ -54,35 +55,62 @@ Same reasoning as the box draft:
 
 ## Parts list
 
-Everything except the cells can come from Amazon Australia. Prices are what amazon.com.au showed on 2026-11-24 (Sydney delivery) and will move, especially around sales. Most of these are multi-packs, so there are spares.
+There are two ways to build it. Prices and delivery dates are what amazon.com.au showed on 2026-11-24 for Sydney (fastest paid delivery; free delivery is about a week). They'll move, and most listings are multi-packs, so there are spares.
 
-| # | Part | Amazon AU listing | ~A$ |
+- **Fast build, from Amazon in 1–3 days:** a USB-C **TP4056 charger with built-in protection** instead of the bq24074. It's the quickest way to get the logger running on 18650s. Its catch is no load sharing, so **switch the logger off while it charges** (see below).
+- **Box-ready build:** the **Adafruit bq24074**, as designed above. No Amazon AU listing ships it quickly: Amazon has it only as an import (about A$50, 1–2 weeks). Core Electronics has it for about A$28 in a day or two. Swap it in later; the cells, holders, switch and divider all carry over.
+
+I couldn't find any load-sharing charger on Amazon AU with fast delivery. The Adafruit bq24074 and bq25185 boards and the MCP73871 modules all ship from overseas, or don't ship to Sydney at all.
+
+### Fast build (Amazon AU)
+
+| # | Part | Amazon AU listing | ~A$ | Fastest |
+|---|---|---|---|---|
+| 1 | Charger + protection | **TP4056 USB-C charging and protection board**, 10-pack: [B0CDKWMXPX](https://www.amazon.com.au/dp/B0CDKWMXPX). 1 A charge, with DW01-style over-charge, over-discharge and short-circuit protection, so no separate protection board. | 17 | overnight |
+| 2 | Cells ×2 | **Not from Amazon** (see below). Two identical **Samsung 35E** (3500 mAh, flat top, unprotected) from **Jaycar, cat. SB2630**, in store today. | 30–40 | today |
+| 3 | Holders | **Single-cell 18650 holders with wire leads**, AIMALL 8-pack: [B0C1RD2NFL](https://www.amazon.com.au/dp/B0C1RD2NFL). Use two, wired in parallel. | 21 | overnight |
+| 4 | Switch | **Mini panel slide switch, SS12F15**, ECSiNG 50-pack: [B0CB5KQVPW](https://www.amazon.com.au/dp/B0CB5KQVPW). Rated 0.5 A; the logger draws under 0.3 A. | 16 | overnight |
+| 5 | Battery level | **Resistor kit**, 600 pcs 1/4 W 1 %, 100 Ω–1 MΩ (has 100 kΩ): [B08XYNDHVN](https://www.amazon.com.au/dp/B08XYNDHVN). **100 nF (104) ceramic capacitors**, 100-pack: [B09532ZP1N](https://www.amazon.com.au/dp/B09532ZP1N). | 21 | overnight / Thu |
+| 6 | Wire | **22 AWG silicone wire, red/black**, BNTECHGO: [B077XBWX8V](https://www.amazon.com.au/dp/B077XBWX8V). Plus heat-shrink and a multimeter if you don't have them. | 16 | overnight |
+| 7 | Meter (recommended) | **USB-C inline power meter**, 4–30 V, 0–6.5 A: [B0CKY57JL9](https://www.amazon.com.au/dp/B0CKY57JL9). For measuring the logger's real current draw. | 20 | Fri |
+
+About A$140–150 with the meter and all the spares, about A$90 without the meter.
+
+### Box-ready build: changes to the list above
+
+| Part | Instead of | Where | ~A$ |
 |---|---|---|---|
-| 1 | Charger | **Adafruit bq24074 charger (Adafruit 4755)**: [B0929F5ZHW](https://www.amazon.com.au/dp/B0929F5ZHW). USB-C and a DC jack on the board, CHG and PGOOD LEDs, 2-pin JST battery socket. Ships from the US (about 1–2 weeks). | 50 |
-| 2 | Cells ×2 | **Not from Amazon** (see below). Two identical **Samsung 35E** (3500 mAh, flat top, unprotected) from **Jaycar, cat. SB2630**, in store or online. | 30–40 |
-| 3 | Protection | **1S 3.7 V 3 A protection board**, DW01-style, e.g. VGOL 6-pack: [B0D4YYPV8Z](https://www.amazon.com.au/dp/B0D4YYPV8Z). One board protects both parallel cells. | 15 |
-| 4 | Holders | **Single-cell 18650 holders with wire leads**, e.g. DIANN 10-pack: [B0D9N7HL2Z](https://www.amazon.com.au/dp/B0D9N7HL2Z), or AIMALL 8-pack: [B0C1RD2NFL](https://www.amazon.com.au/dp/B0C1RD2NFL). Use two, wired in parallel yourself. | 9–21 |
-| 5 | Battery lead | **JST-PH 2.0 2-pin pigtails**, male and female, 10 pairs: [B07NWD5NTN](https://www.amazon.com.au/dp/B07NWD5NTN). The male plug goes into the charger's battery socket. | 9 |
-| 6 | Switch | **Mini panel slide switch, SS12F15**, ECSiNG 50-pack: [B0CB5KQVPW](https://www.amazon.com.au/dp/B0CB5KQVPW). It's rated 0.5 A; the logger draws under 0.3 A, so that's enough. | 16 |
-| 7 | Battery level | **Resistor kit**, 600 pcs 1/4 W 1 % (has 100 kΩ): [B0G499DJZ4](https://www.amazon.com.au/dp/B0G499DJZ4). **100 nF (104) ceramic capacitors**, 100-pack: [B09532ZP1N](https://www.amazon.com.au/dp/B09532ZP1N). | 19 |
-| 8 | Wire | **22 AWG silicone wire, red/black**, BNTECHGO 25 ft: [B077XBWX8V](https://www.amazon.com.au/dp/B077XBWX8V). Plus heat-shrink and a multimeter if you don't have them. | 16 |
-| 9 | Meter (recommended) | **USB-C inline power meter**, 4–30 V, 0–6.5 A: [B0CKY57JL9](https://www.amazon.com.au/dp/B0CKY57JL9). For measuring the logger's real current draw. | 20 |
+| **Adafruit bq24074 charger (Adafruit 4755)** | the TP4056 | Core Electronics `ADA4755` (1–2 days, about A$28), or Amazon AU [B0929F5ZHW](https://www.amazon.com.au/dp/B0929F5ZHW) (import, about A$50, 1–2 weeks) | 28–50 |
+| **1S 3 A protection board**, VGOL 6-pack: [B0D4YYPV8Z](https://www.amazon.com.au/dp/B0D4YYPV8Z) (overnight) | (the TP4056 had protection built in) | Amazon AU | 15 |
+| **JST-PH 2.0 2-pin pigtails**, 10 pairs: [B07NWD5NTN](https://www.amazon.com.au/dp/B07NWD5NTN) (overnight) | – | Amazon AU | 9 |
 
-About A$185–200 all up from Amazon plus Jaycar, mostly because of the multi-packs and the imported charger. Without the meter and the spares it's under A$100.
+These are search results, not tested parts: cheap modules in particular vary between sellers. Read each listing before you buy, and check every module with the multimeter before it touches a cell.
 
-These are search results, not tested parts: the cheap modules in particular vary between sellers. Read each listing before you buy, and check every module with the multimeter before it touches a cell.
-
-**Why the cells aren't from Amazon.** Amazon AU doesn't seem to sell loose, name-brand 18650 cells: searches for Samsung, LG, Molicel, XTAR and Nitecore cells turn up chargers, battery packs with leads already soldered on, or NiMH cells mislabelled as 18650s. Fake and relabelled 18650s are common, and for cells you want a real Samsung or LG from a shop that sells them as such. Jaycar's SB2630 is a genuine Samsung 35E. Buy both at the same time so they're from the same batch.
-
-**Charger, cheaper and faster.** The same Adafruit charger is about A$28 from Core Electronics (`ADA4755`) with delivery in a couple of days, against about A$50 and 1–2 weeks from Amazon. Worth it if the price or the wait matters.
+**Why the cells aren't from Amazon.** Amazon AU doesn't seem to sell loose, name-brand 18650 cells: searches for Samsung, LG, Molicel, XTAR and Nitecore cells turn up chargers, packs with leads already soldered on, or NiMH cells mislabelled as 18650s. Fake and relabelled 18650s are common, so buy cells from a shop that sells them as the real thing. Jaycar's SB2630 is a genuine Samsung 35E. Buy both at the same time so they're from the same batch.
 
 > **Most "2 × 18650" holders are wired in series.** Amazon's "2 slot" 18650 holders, the SparkFun one Core sells (PRT-12900) and most cheap double holders join the cells end to end and give 7.4 V. Don't use one unless you've confirmed it's parallel. Two single holders wired + to + and − to − is the safe choice. Check before you connect anything: with both cells in, a parallel pack reads about 3.6–4.2 V across the leads, a series pack about 7–8.4 V.
 
-### Cheaper option, with a catch
+### The TP4056's catch: switch off to charge
 
-A **USB-C TP4056 module with protection** (for example HiLetgo 3-pack, [B07PKND8KG](https://www.amazon.com.au/dp/B07PKND8KG), about A$14) does charging and protection in one board, so it replaces both the Adafruit charger and the protection board. It works, but it has **no load sharing**: with the logger running, the logger's 100–170 mA keeps the charge current above the TP4056's 100 mA "full" threshold, so it never finishes and holds the cells at 4.2 V. If you use one, **switch the logger off while charging**, and expect to replace it with the bq24074 for the box. The bq24074 is recommended because it carries straight over.
+The TP4056 has **no load sharing**. It decides the battery is full when its current drops to about 100 mA, but it can't tell the logger's 100–170 mA from charge current. With the logger running, the current never drops that low, so it never finishes and holds the cells at 4.2 V. That's hard on the cells if it's left that way.
 
-## Wiring
+So with the fast build: **switch the logger off, then plug in USB-C to charge.** The red LED means charging, and green means full. It also means no syncing while charging, which the bq24074 version will fix.
+
+### Fast build wiring
+
+The same as the wiring table below, except:
+
+| From | To | Notes |
+|---|---|---|
+| Both cells' + (joined) | TP4056 **B+** | Parallel, + to +. |
+| Both cells' − (joined) | TP4056 **B−** | − to −. |
+| TP4056 **OUT+** | Switch → logger **5V** (header pin 10) | OUT is after the protection, so a short or a flat pack cuts the logger off. **Never take the load from B+/B−.** |
+| TP4056 **OUT−** | Logger **GND** (header pin 11) | OUT− isn't the same as B− (the protection switch sits between them), so take the logger's ground from OUT−. |
+| USB-C on the TP4056 | Charging only | |
+
+No PGOOD wire: the TP4056 doesn't have one. The battery divider on GPIO 0 works the same. Its reading tops out at about 4.2 V while charging, but the logger is off then anyway.
+
+## Wiring (bq24074 build)
 
 | From | To | Notes |
 |---|---|---|
