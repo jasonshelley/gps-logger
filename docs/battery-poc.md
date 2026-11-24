@@ -177,6 +177,45 @@ That's several fishing days per charge. Charging a flat 5200–7000 mAh pack tak
 
 **To check on the bench:** the bq24074 has a fast-charge safety timer, and a pack this large may hit it before it's full at 1 A. If the CHG LED goes out but the cells read well under 4.15 V, unplug and replug the cable to restart charging, or move to the 1.5 A jumper.
 
+## Target: a week per charge
+
+The goal (2026-11-25) is 8 days between charges, using the logger about 6 hours a day (4–5 hours fishing plus an hour here and there), and off or in a low-power state the rest of the time.
+
+**Active use:** 8 days × 6 h = **48 hours**.
+
+| Logging current | Needed for 48 h | With 85 % usable | Cells (3500 mAh) | Cells (2600 mAh) |
+|---|---|---|---|---|
+| 170 mA (today's high estimate) | 8160 mAh | 9600 mAh | 3 | 4 |
+| 100 mA (today's low estimate) | 4800 mAh | 5650 mAh | 2 | 3 |
+| 60 mA (after the firmware work below) | 2880 mAh | 3400 mAh | 1 | 2 |
+
+**The other 18 hours a day** (144 hours over the week):
+
+| Low-power state | Draw | Over 8 days |
+|---|---|---|
+| Hard off with the power switch | a few µA (protection board only) | nothing worth counting |
+| Soft off: chip in deep sleep, GPS and backlight powered down | about 0.2–1 mA | 30–150 mAh |
+| "Standby" with the GPS left running | about 40 mA | about 5800 mAh, more than the whole active budget |
+
+So whatever the low-power state is, **the GPS has to be powered down in it**.
+
+**Recommendation:** 4 × 3500 mAh cells in parallel (14 000 mAh, about 11 900 mAh usable). That covers the week even at today's worst-case estimate, with about 45 % to spare, and gives about two weeks once the firmware work is done. Friday's current measurement decides whether 3 cells are enough.
+
+What a 4-cell pack costs:
+
+- **Charging time:** about 14 h at 1 A, or about 10 h with the bq24074 on its 1.5 A jumper. Watch for the bq24074's safety timer ending a charge early (see above).
+- **Size and weight:** four 18650s are about 37 × 37 × 65 mm as a 2 × 2 block and about 190 g. The sealed box in `docs/hardware.md` was planned around a flat 2400 mAh LiPo, so it needs a slightly bigger box, and the float check needs redoing.
+
+### Firmware work for efficiency
+
+In order of likely payoff, to be confirmed with the power meter:
+
+1. **Backlight off, not dimmed**, after the awake period, and on again with any button press. It's the biggest load the firmware controls.
+2. **GPS power saving.** The NEO-7M draws about 40 mA tracking continuously. u-blox's power save mode, or fewer fixes while the boat is stationary (the logger only writes a point a minute then), could roughly halve that.
+3. **Let the CPU sleep** between GPS sentences (ESP-IDF automatic light sleep) instead of spinning at 80 MHz. Needs care so no GPS bytes are lost on the UART.
+4. **Bluetooth:** it's already off in Logging mode and only starts in Transfer. Shut the radio down fully when leaving Transfer, too.
+5. **Low-power state:** a hard power switch costs nothing. A soft-off (deep sleep, woken by a button) also needs a MOSFET to cut the GPS module's power.
+
 ## Firmware hooks
 
 Not written yet. Once the divider is fitted, this is the plan (it matches the box draft's firmware list):
