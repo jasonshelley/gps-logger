@@ -11,7 +11,7 @@ This is the bench version of the power design in the sealed-box draft (`docs/har
 - **Fastest from Amazon AU (1–3 days):** a USB-C TP4056 board with protection built in instead. It works, but you have to switch the logger off to charge it. See [Parts list](#parts-list).
 - **Protection:** a small 1S protection board between the cells and the charger. The bq24074 doesn't cut the battery off when it's flat.
 - **Supply:** the charger's OUT goes through an on/off switch straight to the logger's **5V** header pin. No boost converter and no buck converter. The board's own 3.3 V regulator does the rest.
-- **Runtime:** roughly 30–60 hours, against 12–20 h for the 2400 mAh LiPo in the box draft.
+- **Runtime:** roughly 26–60 hours, depending on the cells, against 12–20 h for the 2400 mAh LiPo in the box draft.
 - **Battery level:** two 100 kΩ resistors from 5V to GPIO 0, so the firmware can read the battery voltage.
 
 ```
@@ -58,7 +58,7 @@ Same reasoning as the box draft:
 There are two ways to build it. Prices and delivery dates are what amazon.com.au showed on 2026-11-24 for Sydney (fastest paid delivery; free delivery is about a week). They'll move, and most listings are multi-packs, so there are spares.
 
 - **Fast build, from Amazon in 1–3 days:** a USB-C **TP4056 charger with built-in protection** instead of the bq24074. It's the quickest way to get the logger running on 18650s. Its catch is no load sharing, so **switch the logger off while it charges** (see below).
-- **Box-ready build:** the **Adafruit bq24074**, as designed above. No Amazon AU listing ships it quickly: Amazon has it only as an import (about A$50, 1–2 weeks). Core Electronics has it for about A$28 in a day or two. Swap it in later; the cells, holders, switch and divider all carry over.
+- **Box-ready build (recommended):** the **Adafruit bq24074**, as designed above, from Core Electronics with next-day delivery. Only the protection board has to come from Amazon. On Amazon AU the charger is an import only (about A$50, 1–2 weeks).
 
 I couldn't find any load-sharing charger on Amazon AU with fast delivery. The Adafruit bq24074 and bq25185 boards and the MCP73871 modules all ship from overseas, or don't ship to Sydney at all.
 
@@ -76,13 +76,28 @@ I couldn't find any load-sharing charger on Amazon AU with fast delivery. The Ad
 
 About A$140–150 with the meter and all the spares, about A$90 without the meter.
 
-### Box-ready build: changes to the list above
+### Box-ready build (Core Electronics)
 
-| Part | Instead of | Where | ~A$ |
+Everything on Core was in stock on 2026-11-24 with next-day delivery to Sydney. Orders before 2 PM ship the same day.
+
+| Part | Core item (SKU) | Qty | ~A$ |
 |---|---|---|---|
-| **Adafruit bq24074 charger (Adafruit 4755)** | the TP4056 | Core Electronics `ADA4755` (1–2 days, about A$28), or Amazon AU [B0929F5ZHW](https://www.amazon.com.au/dp/B0929F5ZHW) (import, about A$50, 1–2 weeks) | 28–50 |
-| **1S 3 A protection board**, VGOL 6-pack: [B0D4YYPV8Z](https://www.amazon.com.au/dp/B0D4YYPV8Z) (overnight) | (the TP4056 had protection built in) | Amazon AU | 15 |
-| **JST-PH 2.0 2-pin pigtails**, 10 pairs: [B07NWD5NTN](https://www.amazon.com.au/dp/B07NWD5NTN) (overnight) | – | Amazon AU | 9 |
+| Charger | [Adafruit bq24074 USB/DC/Solar charger](https://core-electronics.com.au/adafruit-universal-usb-dc-solar-lithium-ion-polymer-charger-bq24074.html) (ADA4755) | 1 | 28.25 |
+| Cells | [18650 cell, 3.7 V 2600 mAh](https://core-electronics.com.au/polymer-lithium-ion-battery-18650-cell-2600mah.html) (CE04624), unprotected, 65 mm. Road freight only. | 2 | 22.90 |
+| Holders | [Battery holder, 1×18650, wire leads](https://core-electronics.com.au/battery-holder-1x18650-wire-leads.html) (PRT-12899) | 2 | 5.30 |
+| Battery lead | [JST PH 2-pin cable, 200 mm](https://core-electronics.com.au/jst-ph-2-pin-cable-male-header-200mm.html) (ADA3814), plugs into the charger's battery socket | 1 | 1.60 |
+| Switch | [SPDT mini power switch](https://core-electronics.com.au/spdt-mini-power-switch.html) (COM-00102) | 1 | 2.95 |
+| Resistors | [600-pack 1/4 W 1 % resistors, 30 values](https://core-electronics.com.au/600-pack-of-1-4-watt-1-resistors-30-values-20-of-each.html) (CE05092), for the 100 kΩ pair | 1 | 2.95 |
+| Capacitors | [0.1 µF ceramic, 10-pack](https://core-electronics.com.au/0-1uf-ceramic-capacitors-10-pack.html) (ADA753) | 1 | 3.50 |
+| Wire (optional) | [Silicone hookup wire kit, 22 AWG](https://core-electronics.com.au/silicone-hookup-wire-kit-6-colours-stranded.html) (CE09603) | 1 | 29.70 |
+| Heat-shrink (optional) | [Heatshrink pack, standard](https://core-electronics.com.au/heatshrink-pack-standard.html) (CE09414) | 1 | 15.80 |
+| Meter (recommended) | [Adafruit mini OLED USB-C power meter](https://core-electronics.com.au/adafruit-mini-oled-usb-c-power-meter-analyzer.html) (ADA6271) | 1 | 28.05 |
+| **Protection** | **Not stocked at Core.** VGOL 1S 3 A protection board 6-pack from Amazon AU: [B0D4YYPV8Z](https://www.amazon.com.au/dp/B0D4YYPV8Z) (overnight) | 1 | 14.59 |
+
+About A$82 for the essentials including the protection board, or about A$155 with the wire, heat-shrink and meter.
+
+- Core's protected 18650 (CE10144) would make the protection board unnecessary, but it was on back-order, and at 70 mm long it doesn't fit standard holders.
+- For more runtime, use two Samsung 35E cells (3500 mAh) from Jaycar (SB2630) instead of Core's 2600 mAh cells.
 
 These are search results, not tested parts: cheap modules in particular vary between sellers. Read each listing before you buy, and check every module with the multimeter before it touches a cell.
 
@@ -154,10 +169,11 @@ Using about 85 % of the pack:
 
 | Pack | At 100 mA | At 170 mA |
 |---|---|---|
+| 2 × 2600 mAh = 5200 mAh (Core) | about 44 h | about 26 h |
 | 2 × 3000 mAh = 6000 mAh | about 51 h | about 30 h |
 | 2 × 3500 mAh = 7000 mAh | about 60 h | about 35 h |
 
-That's several fishing days per charge. Charging a flat 6000–7000 mAh pack takes about 7–8 hours at 1 A, or about 5 hours at 1.5 A.
+That's several fishing days per charge. Charging a flat 5200–7000 mAh pack takes about 6–8 hours at 1 A, or about 5 hours at 1.5 A.
 
 **To check on the bench:** the bq24074 has a fast-charge safety timer, and a pack this large may hit it before it's full at 1 A. If the CHG LED goes out but the cells read well under 4.15 V, unplug and replug the cable to restart charging, or move to the 1.5 A jumper.
 
