@@ -7,8 +7,8 @@ This is the bench version of the power design in the sealed-box draft (`docs/har
 ## The short version
 
 - **Two 18650 cells in parallel** (1S2P): one 3.7 V cell with double the capacity. Not series.
-- **Charger: Adafruit bq24074 Universal USB/DC/Solar charger** (Adafruit 4755, Core Electronics `ADA4755`, about A$28). It has USB-C on the board and load sharing, and it's the same charger the sealed box uses, so nothing is thrown away.
-- **Protection:** a small 1S protection board between the cells and the charger (or protected cells). The bq24074 doesn't cut the battery off when it's flat.
+- **Charger: Adafruit bq24074 Universal USB/DC/Solar charger** (Adafruit 4755: about A$50 on Amazon AU, or A$28 from Core Electronics). It has USB-C on the board and load sharing, and it's the same charger the sealed box uses, so nothing is thrown away.
+- **Protection:** a small 1S protection board between the cells and the charger. The bq24074 doesn't cut the battery off when it's flat.
 - **Supply:** the charger's OUT goes through an on/off switch straight to the logger's **5V** header pin. No boost converter and no buck converter. The board's own 3.3 V regulator does the rest.
 - **Runtime:** roughly 30–60 hours, against 12–20 h for the 2400 mAh LiPo in the box draft.
 - **Battery level:** two 100 kΩ resistors from 5V to GPIO 0, so the firmware can read the battery voltage.
@@ -54,26 +54,33 @@ Same reasoning as the box draft:
 
 ## Parts list
 
-Rough AUD prices. Check stock before ordering.
+Everything except the cells can come from Amazon Australia. Prices are what amazon.com.au showed on 2026-11-24 (Sydney delivery) and will move, especially around sales. Most of these are multi-packs, so there are spares.
 
-| # | Part | What to get | ~A$ |
+| # | Part | Amazon AU listing | ~A$ |
 |---|---|---|---|
-| 1 | Charger | **Adafruit bq24074 charger, Adafruit 4755** (Core `ADA4755`, A$28.25 at the time of writing; also Little Bird). USB-C and a DC jack on the board, CHG and PGOOD LEDs, 2-pin JST battery socket. | 28 |
-| 2 | Cells ×2 | **Two identical genuine 18650 Li-ion cells, about 3000–3500 mAh**: same brand, model and batch, bought together. Samsung 35E or 30Q, LG MJ1, Molicel P28A and similar, from a battery specialist, Jaycar or Core. Avoid anything claiming 5000 mAh or more: real 18650s top out around 3500 mAh. | 20–35 |
-| 3 | Protection | **One 1S Li-ion protection board** (DW01A + 8205A, usually sold as "1S 3.7V 18650 protection board", 2–3 A). One board protects both parallel cells. *Or* buy protected button-top cells instead and skip this, but they're about 69 mm long and don't fit every holder. | 3–5 |
-| 4 | Holders | **Two single-cell 18650 holders** with leads, wired in parallel yourself. See the warning below about double holders. | 5–10 |
-| 5 | Battery lead | A **2-pin JST-PH pigtail** to plug into the charger's battery socket (or solder to its battery pads). | 2 |
-| 6 | Switch | Any small slide or toggle switch rated 1 A or more. | 2–5 |
-| 7 | Battery level | 2 × 100 kΩ resistors and a 100 nF ceramic capacitor. | <1 |
-| 8 | Bits | 22–24 AWG silicone wire, heat-shrink, a multimeter. A USB-C inline power meter is very useful for the current measurements. | – |
+| 1 | Charger | **Adafruit bq24074 charger (Adafruit 4755)**: [B0929F5ZHW](https://www.amazon.com.au/dp/B0929F5ZHW). USB-C and a DC jack on the board, CHG and PGOOD LEDs, 2-pin JST battery socket. Ships from the US (about 1–2 weeks). | 50 |
+| 2 | Cells ×2 | **Not from Amazon** (see below). Two identical **Samsung 35E** (3500 mAh, flat top, unprotected) from **Jaycar, cat. SB2630**, in store or online. | 30–40 |
+| 3 | Protection | **1S 3.7 V 3 A protection board**, DW01-style, e.g. VGOL 6-pack: [B0D4YYPV8Z](https://www.amazon.com.au/dp/B0D4YYPV8Z). One board protects both parallel cells. | 15 |
+| 4 | Holders | **Single-cell 18650 holders with wire leads**, e.g. DIANN 10-pack: [B0D9N7HL2Z](https://www.amazon.com.au/dp/B0D9N7HL2Z), or AIMALL 8-pack: [B0C1RD2NFL](https://www.amazon.com.au/dp/B0C1RD2NFL). Use two, wired in parallel yourself. | 9–21 |
+| 5 | Battery lead | **JST-PH 2.0 2-pin pigtails**, male and female, 10 pairs: [B07NWD5NTN](https://www.amazon.com.au/dp/B07NWD5NTN). The male plug goes into the charger's battery socket. | 9 |
+| 6 | Switch | **Mini panel slide switch, SS12F15**, ECSiNG 50-pack: [B0CB5KQVPW](https://www.amazon.com.au/dp/B0CB5KQVPW). It's rated 0.5 A; the logger draws under 0.3 A, so that's enough. | 16 |
+| 7 | Battery level | **Resistor kit**, 600 pcs 1/4 W 1 % (has 100 kΩ): [B0G499DJZ4](https://www.amazon.com.au/dp/B0G499DJZ4). **100 nF (104) ceramic capacitors**, 100-pack: [B09532ZP1N](https://www.amazon.com.au/dp/B09532ZP1N). | 19 |
+| 8 | Wire | **22 AWG silicone wire, red/black**, BNTECHGO 25 ft: [B077XBWX8V](https://www.amazon.com.au/dp/B077XBWX8V). Plus heat-shrink and a multimeter if you don't have them. | 16 |
+| 9 | Meter (recommended) | **USB-C inline power meter**, 4–30 V, 0–6.5 A: [B0CKY57JL9](https://www.amazon.com.au/dp/B0CKY57JL9). For measuring the logger's real current draw. | 20 |
 
-About A$60–90 all up, less if you have the bits.
+About A$185–200 all up from Amazon plus Jaycar, mostly because of the multi-packs and the imported charger. Without the meter and the spares it's under A$100.
 
-> **Most "2 × 18650" holders are wired in series.** The SparkFun one Core sells (PRT-12900) and most cheap double holders join the cells end to end and give 7.4 V. Don't use one unless you've confirmed it's parallel. Two single holders wired + to + and − to − is the safe choice. Check before you connect anything: with both cells in, a parallel pack reads about 3.6–4.2 V across the leads, a series pack about 7–8.4 V.
+These are search results, not tested parts: the cheap modules in particular vary between sellers. Read each listing before you buy, and check every module with the multimeter before it touches a cell.
+
+**Why the cells aren't from Amazon.** Amazon AU doesn't seem to sell loose, name-brand 18650 cells: searches for Samsung, LG, Molicel, XTAR and Nitecore cells turn up chargers, battery packs with leads already soldered on, or NiMH cells mislabelled as 18650s. Fake and relabelled 18650s are common, and for cells you want a real Samsung or LG from a shop that sells them as such. Jaycar's SB2630 is a genuine Samsung 35E. Buy both at the same time so they're from the same batch.
+
+**Charger, cheaper and faster.** The same Adafruit charger is about A$28 from Core Electronics (`ADA4755`) with delivery in a couple of days, against about A$50 and 1–2 weeks from Amazon. Worth it if the price or the wait matters.
+
+> **Most "2 × 18650" holders are wired in series.** Amazon's "2 slot" 18650 holders, the SparkFun one Core sells (PRT-12900) and most cheap double holders join the cells end to end and give 7.4 V. Don't use one unless you've confirmed it's parallel. Two single holders wired + to + and − to − is the safe choice. Check before you connect anything: with both cells in, a parallel pack reads about 3.6–4.2 V across the leads, a series pack about 7–8.4 V.
 
 ### Cheaper option, with a catch
 
-A **USB-C TP4056 module with protection** (the A$2–5 boards with DW01A/8205A on them) does charging and protection in one board. It works, but it has **no load sharing**: with the logger running, the logger's 100–170 mA keeps the charge current above the TP4056's 100 mA "full" threshold, so it never finishes and holds the cells at 4.2 V. If you use one, **switch the logger off while charging**, and expect to replace it with the bq24074 for the box. The bq24074 is recommended because it carries straight over.
+A **USB-C TP4056 module with protection** (for example HiLetgo 3-pack, [B07PKND8KG](https://www.amazon.com.au/dp/B07PKND8KG), about A$14) does charging and protection in one board, so it replaces both the Adafruit charger and the protection board. It works, but it has **no load sharing**: with the logger running, the logger's 100–170 mA keeps the charge current above the TP4056's 100 mA "full" threshold, so it never finishes and holds the cells at 4.2 V. If you use one, **switch the logger off while charging**, and expect to replace it with the bq24074 for the box. The bq24074 is recommended because it carries straight over.
 
 ## Wiring
 
