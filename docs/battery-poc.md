@@ -214,7 +214,7 @@ In order of likely payoff, to be confirmed with the power meter:
 2. **GPS power saving.** The NEO-7M draws about 40 mA tracking continuously. u-blox's power save mode, or fewer fixes while the boat is stationary (the logger only writes a point a minute then), could roughly halve that.
 3. **Let the CPU sleep** between GPS sentences (ESP-IDF automatic light sleep) instead of spinning at 80 MHz. Needs care so no GPS bytes are lost on the UART.
 4. **Bluetooth:** it's already off in Logging mode and only starts in Transfer. Shut the radio down fully when leaving Transfer, too.
-5. **Low-power state:** a hard power switch costs nothing. A soft-off (deep sleep, woken by a button) also needs a MOSFET to cut the GPS module's power.
+5. **Low-power state: decided 2026-11-25, a hard power switch.** Off means the switch is off, with no soft-off or sleep state, so there's no MOSFET and no deep-sleep firmware. The cost is a GPS fix to wait for each time it's switched on.
 
 ## Firmware hooks
 
