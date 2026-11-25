@@ -175,7 +175,7 @@ Using about 85 % of the pack:
 
 That's several fishing days per charge. Charging a flat 5200–7000 mAh pack takes about 6–8 hours at 1 A, or about 5 hours at 1.5 A.
 
-**To check on the bench:** the bq24074 has a fast-charge safety timer, and a pack this large may hit it before it's full at 1 A. If the CHG LED goes out but the cells read well under 4.15 V, unplug and replug the cable to restart charging, or move to the 1.5 A jumper.
+**To check on the bench:** the bq24074 has a fast-charge safety timer, typically 5 hours when its TMR pin is left unconnected (TI datasheet, 4–6 h), unless the Adafruit board wires it differently. A 5200 mAh pack takes 5–6 hours at 1 A, so it may stop a little short of full, and a 4-cell pack certainly would. If the CHG LED goes out but the cells read well under 4.15 V, unplug and replug the cable to restart charging, or move to the 1.5 A jumper.
 
 ## Target: a week per charge
 
