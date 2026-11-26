@@ -103,6 +103,19 @@
 #define CPU_FREQ_MHZ          80
 #define LOOP_IDLE_MS          10        // main loop sleep between passes (1 ms while sending a file)
 
+// ---- Battery voltage (docs/battery-poc.md) ----
+// 100k from the 5V pin to GPIO 0, 100k from GPIO 0 to GND, 100 nF across the lower one.
+// GPIO 0 is ADC1 channel 0 and isn't a strapping pin.
+#define PIN_BATT_ADC          0
+#define BATT_DIVIDER          2.0f      // (100k + 100k) / 100k
+#define BATT_CALIBRATION      1.000f    // multimeter reading / logger reading, once, if they differ
+#define BATT_SAMPLES          16        // averaged per reading
+#define BATT_SAMPLE_MS        1000
+#define BATT_MIN_PLAUSIBLE_MV 2500      // below this: no divider fitted, show "--"
+#define BATT_EXTERNAL_MV      4350      // above any Li-ion cell: USB or charger, show "USB"
+#define BATT_LOW_MV           3500      // shown orange at or below this
+#define BATT_CRITICAL_MV      3350      // shown red: the 3.3 V rail is about to sag
+
 // ---- Bluetooth LE transfer ----
 #define BLE_DEVICE_NAME       "GPS Logger"
 

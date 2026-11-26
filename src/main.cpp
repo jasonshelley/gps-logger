@@ -4,6 +4,7 @@
 #include <Arduino.h>
 
 #include "anglers.h"
+#include "battery.h"
 #include "ble_transfer.h"
 #include "clock.h"
 #include "config.h"
@@ -99,6 +100,7 @@ void setup() {
   s_mode = s_modeSwitch.mode();
   s_boot.begin();
 
+  battery::begin();
   clk::begin();
   storage::begin();
   anglers::begin();  // before the meters, which count catches by angler name
@@ -120,6 +122,7 @@ void loop() {
   uint32_t now = millis();
 
   console::poll(now);
+  battery::poll(now);
   for (Button* b : s_catchButtons) b->update(now);
   s_modeSwitch.update(now);
   s_boot.update(now);

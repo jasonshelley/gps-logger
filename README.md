@@ -16,7 +16,7 @@ A handheld GPS logger on a Waveshare ESP32-C6-LCD-1.47. It records the boat's tr
 | 2 momentary buttons | Catch buttons for anglers 1 and 2 (Jase and Matt unless the app renames them) |
 | 1 two-position switch | Optional: Logging / Transfer. Holding BOOT does the same |
 | microSD card | FAT32 |
-| USB power bank | Powers it through the USB-C port |
+| USB power bank | Powers it through the USB-C port. For a built-in battery, see [docs/battery-poc.md](docs/battery-poc.md) (two 18650s and a USB-C charger) |
 
 ### Wiring
 
