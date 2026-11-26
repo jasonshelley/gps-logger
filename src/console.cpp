@@ -4,6 +4,7 @@
 #include <SD.h>
 
 #include "anglers.h"
+#include "battery.h"
 #include "clock.h"
 #include "config.h"
 #include "gps.h"
@@ -24,7 +25,7 @@ static void printHelp() {
   Serial.println(
       "Commands:\n"
       "  help                 this list\n"
-      "  status               GPS, clock, card and today's numbers\n"
+      "  status               GPS, clock, card, battery and today's numbers\n"
       "  ls [/uploaded]       list files in / (or /uploaded) with sizes\n"
       "  cat <file>           print a file\n"
       "  tail <file> [n]      print the last n lines (default 10)\n"
@@ -81,6 +82,11 @@ static void cmdStatus() {
     Serial.printf(" %s %lu,", anglers::get(i).name, (unsigned long)tm.catches[i]);
   Serial.printf(" %.0f m, %lu min on the water%s\n", tm.distanceM, (unsigned long)(tm.waterS / 60),
                 tm.complete ? "" : " (incomplete: card not read)");
+  const char* src = battery::source() == battery::Source::Battery    ? "on battery"
+                    : battery::source() == battery::Source::External ? "external supply (USB or charger)"
+                                                                     : "no divider? reading implausible";
+  Serial.printf("Battery %.3f V (latest %.3f V), %s\n", battery::millivolts() / 1000.0,
+                battery::rawMillivolts() / 1000.0, src);
   Serial.printf("Uptime %lu s, free heap %lu bytes\n", (unsigned long)(now / 1000),
                 (unsigned long)ESP.getFreeHeap());
 }

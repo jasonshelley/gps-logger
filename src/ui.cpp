@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "anglers.h"
+#include "battery.h"
 #include "ble_transfer.h"
 #include "clock.h"
 #include "config.h"
@@ -20,8 +21,8 @@ static lv_obj_t* s_loggerScreen;
 static lv_obj_t* s_transferScreen;
 
 // ---- Logger screen (layout A: catches first) ----
-// From the top: a status strip (GPS state on the left, local time on the
-// right), then cards: the two catch counts, the trip meter, and side by side
+// From the top: a status strip (GPS state on the left, battery voltage in the
+// middle, local time on the right), then cards: the two catch counts, the trip meter, and side by side
 // speed and course, and satellites and HDOP (shown with or without a fix). The
 // border is the health light: green logging, orange no fix, red no GPS or a
 // card error.
@@ -29,6 +30,7 @@ static lv_obj_t* s_loggerBox;
 static lv_obj_t* s_stateDot;
 static lv_obj_t* s_stateLabel;
 static lv_obj_t* s_clockLabel;
+static lv_obj_t* s_battLabel;  // between the GPS state and the clock
 static lv_obj_t* s_catchesCard;
 static lv_obj_t* s_anglerCount[MAX_ANGLERS];  // null past anglers::count()
 static lv_obj_t* s_tripDistance;
@@ -48,7 +50,7 @@ static lv_obj_t* s_bannerNote;
 static uint32_t s_bannerUntil = 0;
 
 // Details page, shown by the BOOT button.
-static const int kDetailRows = 10;
+static const int kDetailRows = 11;
 static lv_obj_t* s_details;
 static lv_obj_t* s_detailValue[kDetailRows];
 static uint32_t s_detailsUntil = 0;
@@ -197,9 +199,12 @@ static void buildLogger() {
   lv_obj_set_style_radius(s_stateDot, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(s_stateDot, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(s_stateDot, palette(LV_PALETTE_RED), 0);
-  lv_obj_align(s_stateDot, LV_ALIGN_TOP_LEFT, 18, 17);
-  s_stateLabel = makeLabel(s_loggerBox, &lv_font_montserrat_14, LV_ALIGN_TOP_LEFT, 32, 12, "No GPS");
-  s_clockLabel = makeLabel(s_loggerBox, &lv_font_montserrat_14, LV_ALIGN_TOP_RIGHT, -18, 12, "--:--");
+  lv_obj_align(s_stateDot, LV_ALIGN_TOP_LEFT, 12, 17);
+  s_stateLabel = makeLabel(s_loggerBox, &lv_font_montserrat_14, LV_ALIGN_TOP_LEFT, 25, 12, "No GPS");
+  s_clockLabel = makeLabel(s_loggerBox, &lv_font_montserrat_14, LV_ALIGN_TOP_RIGHT, -12, 12, "--:--");
+  // Centred in the gap between the state ("SD error" is the longest, to x ~81) and the
+  // clock (from x ~124): "3.85V" in the 12 px font is about 32 px wide.
+  s_battLabel = makeLabel(s_loggerBox, &lv_font_montserrat_12, LV_ALIGN_TOP_MID, 16, 14, "");
 
   // Cards: catches, trip, then speed and GPS side by side. Positions are inside
   // the box's border; cards are kCardX from each side.
@@ -252,14 +257,14 @@ static void buildLogger() {
   lv_obj_set_style_bg_color(s_details, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(s_details, LV_OPA_COVER, 0);
   makeLabel(s_details, &lv_font_montserrat_14, LV_ALIGN_TOP_MID, 0, 10, "Details", kGrey);
-  static const char* kCaptions[kDetailRows] = {"Date", "Time", "Satellites", "HDOP", "Lat",
-                                               "Lon", "Points today", "Card", "Reset", "Firmware"};
+  static const char* kCaptions[kDetailRows] = {"Date", "Time",  "Satellites", "HDOP",  "Lat",     "Lon",
+                                               "Points today", "Card", "Battery", "Reset", "Firmware"};
   // Each value gets the row's width left over after its caption, right-aligned, and is cut
   // short with "..." rather than drawn over the caption if it's ever too long.
   const lv_coord_t kMargin = 12, kGap = 8;
   const lv_coord_t rowWidth = LCD_WIDTH - 6 - 2 * kMargin;
   for (int i = 0; i < kDetailRows; i++) {
-    int y = 38 + i * 26;
+    int y = 38 + i * 24;
     makeLabel(s_details, &lv_font_montserrat_12, LV_ALIGN_TOP_LEFT, kMargin, y + 2, kCaptions[i], kGrey);
     lv_coord_t capW = lv_txt_get_width(kCaptions[i], strlen(kCaptions[i]), &lv_font_montserrat_12, 0,
                                        LV_TEXT_FLAG_NONE);
@@ -370,6 +375,14 @@ static void refreshDetails(uint32_t nowMs) {
   else snprintf(buf, sizeof(buf), "OK");
   setText(s_detailValue[7], buf);
 
+  uint16_t mv = battery::millivolts();
+  switch (battery::source()) {
+    case battery::Source::Unknown: snprintf(buf, sizeof(buf), "--"); break;
+    case battery::Source::External: snprintf(buf, sizeof(buf), "USB, %.2f V", mv / 1000.0); break;
+    case battery::Source::Battery: snprintf(buf, sizeof(buf), "%.2f V", mv / 1000.0); break;
+  }
+  setText(s_detailValue[8], buf);
+
   const trip::Meter& tm = trip::meter();
   if (tm.resetUtc) {
     time_t t = tm.resetUtc;
@@ -379,8 +392,8 @@ static void refreshDetails(uint32_t nowMs) {
   } else {
     snprintf(buf, sizeof(buf), "never reset");
   }
-  setText(s_detailValue[8], buf);
-  setText(s_detailValue[9], FW_VERSION);
+  setText(s_detailValue[9], buf);
+  setText(s_detailValue[10], FW_VERSION);
 }
 
 void refreshLogger(uint32_t nowMs, bool) {
@@ -419,6 +432,22 @@ void refreshLogger(uint32_t nowMs, bool) {
   } else {
     setText(s_clockLabel, "--:--");
   }
+
+  // Battery: blank without the divider, "USB" on an external supply, otherwise the
+  // cell voltage, orange when low and red when the 3.3 V rail is about to sag.
+  uint16_t mv = battery::millivolts();
+  lv_color_t battColour = kWhite;
+  switch (battery::source()) {
+    case battery::Source::Unknown: buf[0] = 0; break;
+    case battery::Source::External: snprintf(buf, sizeof(buf), "USB"); battColour = kGrey; break;
+    case battery::Source::Battery:
+      snprintf(buf, sizeof(buf), "%.2fV", mv / 1000.0);
+      if (mv <= BATT_CRITICAL_MV) battColour = palette(LV_PALETTE_RED);
+      else if (mv <= BATT_LOW_MV) battColour = palette(LV_PALETTE_ORANGE);
+      break;
+  }
+  setText(s_battLabel, buf);
+  setTextColour(s_battLabel, battColour);
 
   // Trip meter: catches, distance and time on the water since the app last reset it.
   const trip::Meter& tm = trip::meter();
