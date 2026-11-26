@@ -8,6 +8,7 @@
 #include "clock.h"
 #include "config.h"
 #include "gps.h"
+#include "lvgl_port.h"
 #include "storage.h"
 #include "track_logger.h"
 #include "trip_meter.h"
@@ -26,6 +27,7 @@ static void printHelp() {
       "Commands:\n"
       "  help                 this list\n"
       "  status               GPS, clock, card, battery and today's numbers\n"
+      "  screenshot           send the screen as hex (tools/screenshot.py saves a PNG)\n"
       "  ls [/uploaded]       list files in / (or /uploaded) with sizes\n"
       "  cat <file>           print a file\n"
       "  tail <file> [n]      print the last n lines (default 10)\n"
@@ -289,6 +291,7 @@ static void runLine(char* line) {
   else if (!strcmp(cmd, "status")) cmdStatus();
   else if (!strcmp(cmd, "ls")) cmdLs(tokens[1]);
   else if (!strcmp(cmd, "df")) cmdDf();
+  else if (!strcmp(cmd, "screenshot")) lvglScreenshot(Serial);
   else if (!strcmp(cmd, "erase-logs")) {
     if (!needCard()) return;
     Serial.println("Delete every log file in / and /uploaded, and zero the trip meter? Type 'yes' to confirm:");
