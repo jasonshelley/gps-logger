@@ -60,13 +60,19 @@ def main():
     port.dtr = False
     port.rts = False
 
+    # Read in big chunks and split lines here: pyserial's readline() reads a byte at a
+    # time, which can't keep up with the ~220 KB burst, and rows arrive short.
+    pending = bytearray()
+
     def readline(timeout):
         end = time.time() + timeout
-        buf = b""
         while time.time() < end:
-            buf += port.readline()
-            if buf.endswith(b"\n"):
-                return buf.decode("ascii", "replace").strip()
+            i = pending.find(b"\n")
+            if i >= 0:
+                line = bytes(pending[:i])
+                del pending[:i + 1]
+                return line.decode("ascii", "replace").strip()
+            pending.extend(port.read(port.in_waiting or 1))
         return None
 
     try:
@@ -79,6 +85,7 @@ def main():
             print("[screenshot.py] no 'Ready.' seen; asking anyway", file=sys.stderr)
         time.sleep(args.delay)
         port.reset_input_buffer()
+        pending.clear()
         port.write(b"screenshot\n")
 
         width = height = None
@@ -94,7 +101,9 @@ def main():
             elif line.startswith("AREA ") and frame is not None:
                 x1, y1, x2, y2 = map(int, line.split()[1:5])
                 for y in range(y1, y2 + 1):
-                    row = readline(5)
+                    row = readline(5) or ""
+                    if len(row) < (x2 - x1 + 1) * 4:
+                        sys.exit(f"[screenshot.py] row {y} arrived short ({len(row)} characters); try again")
                     for i, x in enumerate(range(x1, x2 + 1)):
                         frame[y][x] = rgb565(int(row[i * 4:i * 4 + 4], 16))
             elif line == "END SCREENSHOT":
