@@ -1,6 +1,6 @@
 # Battery proof of concept: two 18650 cells and USB-C charging
 
-Status: proposal, 2026-11-24. Nothing here has been built yet.
+Status: proposal, 2026-11-24. First bench result, 2026-11-26: a single 18650 cell on the 5V pin powers the board.
 
 This is the bench version of the power design in the sealed-box draft (`docs/hardware.md`, not yet committed). It skips the box, the magnetic port and the waterproof parts. The goal is just to run the logger from its own battery, charge it from a USB-C cable, and learn the real current draw and runtime.
 
@@ -232,6 +232,10 @@ Not written yet. Once the divider is fitted, this is the plan (it matches the bo
 - **On charge:** with the cable in, the reading is OUT (about 4.4 V), not the battery. Show "On charge" instead of a percentage when the voltage is over about 4.3 V, or use PGOOD on GPIO 20 if it's wired.
 - **Screen and console:** a battery icon and percentage on the logger screen, and the voltage in `status`.
 - **Low battery:** at 3.40 V show a banner; at 3.30 V (held for 30 s, so a backlight or SD spike doesn't trigger it) flush the log, write a final row, and stop logging cleanly. This settles the low-battery write left open in requirements Q5.
+
+## Bench results
+
+- **2026-11-26:** a single 18650 cell wired to the board's 5V pin powers the board. This confirms that the ME6217 regulator runs from one cell, with no boost converter. Still to measure: the current draw, the 3V3 rail at low cell voltage, and the runtime.
 
 ## Bench test plan
 
